@@ -1,31 +1,32 @@
+import os
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
+from dotenv import load_dotenv
 
-# Bot tokeningizni kiriting
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+from generator import generate_presentation_content, create_pptx_file
 
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 logging.basicConfig(level=logging.INFO)
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Foydalanuvchi holatlari (FSM)
 class PresentationState(StatesGroup):
-    choosing_plan = State()
-    waiting_for_topic = State()
     waiting_for_script = State()
+    waiting_for_topic = State()
 
-# Inline tugmalar
 def get_main_keyboard():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📄 Tayyor ssenariy bilan (15 000 so'm)", callback_data="plan_standard")],
         [InlineKeyboardButton(text="🤖 AI avtomatik yaratishi (20 000 so'm)", callback_data="plan_premium")]
     ])
-    return keyboard
 
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message, state: FSMContext):
@@ -33,29 +34,64 @@ async def start_cmd(message: types.Message, state: FSMContext):
     await message.answer(
         f"Assalomu alaykum, {message.from_user.full_name}!\n\n"
         "Prezentatsiya yaratuvchi botga xush kelibsiz.\n"
-        "Iltimos, o'zingizga mos tarifni tanlang:",
+        "Kerakli tarifni tanlang:",
         reply_markup=get_main_keyboard()
     )
 
 @dp.callback_query(F.data == "plan_standard")
 async def process_standard_plan(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(plan="standard")
     await state.set_state(PresentationState.waiting_for_script)
     await callback.message.answer(
         "Siz **15 000 so'mlik** tarifni tanladingiz.\n\n"
-        "Iltimos, prezentatsiya mavzusi va slaydlar ssenariysini (matnlarini) yuboring."
+        "Iltimos, prezentatsiya mavzusini va qisqacha ssenariyingizni yuboring:"
     )
     await callback.answer()
 
 @dp.callback_query(F.data == "plan_premium")
 async def process_premium_plan(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(plan="premium")
     await state.set_state(PresentationState.waiting_for_topic)
     await callback.message.answer(
         "Siz **20 000 so'mlik** tarifni tanladingiz.\n\n"
-        "Iltimos, prezentatsiya mavzusini yuboring. AI o'zi slaydlar matnini tuzib beradi."
+        "Iltimos, faqat prezentatsiya mavzusini yuboring (Masalan: *Sun'iy intellektning kelajagi*):"
     )
     await callback.answer()
+
+# Standard Tarif uchun ishlovchi handler
+@dp.message(PresentationState.waiting_for_script)
+async def handle_standard(message: types.Message, state: FSMContext):
+    msg = await message.answer("⏳ Gemini AI ssenariyingizni qayta ishlamoqda va prezentatsiya tayyorlamoqda...")
+    
+    topic = message.text[:50] # Sarlavha uchun qisqa matn
+    slides_data = await generate_presentation_content(topic=topic, user_script=message.text)
+    
+    file_path = f"pres_{message.from_user.id}.pptx"
+    create_pptx_file(slides_data, file_path)
+    
+    doc = FSInputFile(file_path)
+    await message.answer_document(doc, caption="✅ Prezentatsiyangiz tayyor!")
+    
+    await msg.delete()
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    await state.clear()
+
+# Premium Tarif uchun ishlovchi handler
+@dp.message(PresentationState.waiting_for_topic)
+async def handle_premium(message: types.Message, state: FSMContext):
+    msg = await message.answer("⏳ Gemini AI mavzu bo'yicha slaydlar matnini o'zi tuzmoqda va PPTX tayyorlamoqda...")
+    
+    slides_data = await generate_presentation_content(topic=message.text)
+    
+    file_path = f"pres_{message.from_user.id}.pptx"
+    create_pptx_file(slides_data, file_path)
+    
+    doc = FSInputFile(file_path)
+    await message.answer_document(doc, caption="✅ AI tomonidan yaratilgan prezentatsiyangiz tayyor!")
+    
+    await msg.delete()
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    await state.clear()
 
 async def main():
     await dp.start_polling(bot)
