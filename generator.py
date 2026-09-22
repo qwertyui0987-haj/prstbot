@@ -18,7 +18,6 @@ def _get_gemini_response_sync(prompt: str) -> str:
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
-    # Bepul va tezkor Gemini modellar ro'yxati
     models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     
     headers = {"Content-Type": "application/json"}
@@ -93,10 +92,8 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     # JSON matnini tozalash va parse qilish
     try:
         clean_text = raw_response.strip()
-        clean_text = re.sub(r'^
-```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r'\s*
-```$', '', clean_text, flags=re.IGNORECASE).strip()
+        clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\s*```$", "", clean_text, flags=re.IGNORECASE).strip()
 
         data = json.loads(clean_text)
         if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
@@ -106,7 +103,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     except Exception as e:
         print(f"[PARSER ERROR] JSON o'qishda xatolik: {e}")
 
-    # Agar API da xatolik bo'lsa bot to'xtab qolmasligi uchun zaxira slaydlari
+    # Zaxira slaydlari
     return [
         {
             "title": topic,
@@ -193,12 +190,3 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
     return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
-```eof
-
-### Bajarishingiz kerak bo'lgan 3 ta oddiy qadam:
-
-1. **`generator.py` fayliga joylash:** Loyihangizdagi `generator.py` faylini ochib, ichidagi barcha eshitilgan/buzuq kodlarni o'chirib, yuqoridagi kodni to'liqligicha ko'chirib o'tkazing.
-2. **Railway'da Kalitni kiritish:** Railway panelingizdagi **Variables** bo'limiga kirib:
-   - Kalit nomi (**Key**): `GEMINI_API_KEY`
-   - Qiymati (**Value**): Google AI Studio'dan olingan bepul API kalitingiz (`AIzaSy...`).
-3. **`requirements.txt` ni tekshirish:** `requirements.txt` faylingizda `requests` hamda `python-pptx` kutubxonalari yozilganiga ishonch hosil qiling va kodingizni serverga (`git push`) yuklang.
