@@ -5,45 +5,49 @@ import re
 import asyncio
 import urllib.request
 import urllib.parse
-from openai import OpenAI
+import requests
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-def _get_openai_response_sync(prompt: str) -> str:
-    """Запрос к стабильной модели GPT-4o-mini через OpenAI API"""
-    if not OPENAI_API_KEY:
-        raise Exception("OPENAI_API_KEY не найден! Добавьте OPENAI_API_KEY в Railway Variables.")
+def _get_gemini_response_sync(prompt: str) -> str:
+    """Google Gemini REST API orqali to'g'ridan-to'g'ri so'rov yuborish"""
+    if not GEMINI_API_KEY:
+        raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    # Bepul va tezkor Gemini modellar ro'yxati
+    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json"
+        }
+    }
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Siz faqat va faqat standart JSON formatida javob beradigan yordamchisiz. Boshqa hech qanday kirish yoki chiqish matnlari yozmang."
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            temperature=0.3,
-            response_format={"type": "json_object"}
-        )
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                text = data['candidates'][0]['content']['parts'][0]['text']
+                return text
+            else:
+                print(f"[GENERATOR LOG] Gemini {model} status: {response.status_code}, msg: {response.text}")
+        except Exception as err:
+            print(f"[GENERATOR LOG] Gemini {model} ulanish xatosi: {err}")
+            continue
 
-        if response.choices and len(response.choices) > 0:
-            return response.choices[0].message.content
-    except Exception as err:
-        print(f"[GENERATOR LOG] Ошибка OpenAI API: {err}")
-        raise err
-
-    raise Exception("От OpenAI API получен пустой ответ.")
+    raise Exception("Gemini API bilan bog'lanib bo'lmadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
@@ -52,7 +56,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
-        Javobingiz faqat quyidagi JSON tuzilmasida bo'lishi shart:
+        Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
@@ -68,7 +72,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
-        Javobingiz faqat quyidagi JSON tuzilmasida bo'lishi shart:
+        Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
@@ -81,22 +85,28 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         """
 
     try:
-        raw_response = await asyncio.to_thread(_get_openai_response_sync, prompt)
+        raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
     except Exception as e:
-        print(f"[GENERATOR ERROR] OpenAI API error: {e}")
+        print(f"[GENERATOR ERROR] API xatosi: {e}")
         raw_response = ""
 
-    # Парсинг JSON
+    # JSON matnini tozalash va parse qilish
     try:
-        data = json.loads(raw_response)
+        clean_text = raw_response.strip()
+        clean_text = re.sub(r'^
+```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r'\s*
+```$', '', clean_text, flags=re.IGNORECASE).strip()
+
+        data = json.loads(clean_text)
         if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
             return data["slides"]
         elif isinstance(data, list) and len(data) > 0:
             return data
     except Exception as e:
-        print(f"[PARSER ERROR] Ошибка чтения JSON: {e}")
+        print(f"[PARSER ERROR] JSON o'qishda xatolik: {e}")
 
-    # Запасные слайды в случае сбоя сети
+    # Agar API da xatolik bo'lsa bot to'xtab qolmasligi uchun zaxira slaydlari
     return [
         {
             "title": topic,
@@ -183,3 +193,12 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
     return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
+```eof
+
+### Bajarishingiz kerak bo'lgan 3 ta oddiy qadam:
+
+1. **`generator.py` fayliga joylash:** Loyihangizdagi `generator.py` faylini ochib, ichidagi barcha eshitilgan/buzuq kodlarni o'chirib, yuqoridagi kodni to'liqligicha ko'chirib o'tkazing.
+2. **Railway'da Kalitni kiritish:** Railway panelingizdagi **Variables** bo'limiga kirib:
+   - Kalit nomi (**Key**): `GEMINI_API_KEY`
+   - Qiymati (**Value**): Google AI Studio'dan olingan bepul API kalitingiz (`AIzaSy...`).
+3. **`requirements.txt` ni tekshirish:** `requirements.txt` faylingizda `requests` hamda `python-pptx` kutubxonalari yozilganiga ishonch hosil qiling va kodingizni serverga (`git push`) yuklang.
