@@ -21,33 +21,39 @@ def _get_gemini_response_sync(prompt: str) -> str:
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # Единственная актуальная и поддерживаемая модель
-    target_model = "gemini-3.6-flash"
+    # Navbati bilan sinab ko'riladigan modellar
+    candidate_models = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-3.6-flash"
+    ]
 
-    # Делаем 5 попыток на случай перегрузки сервера (ошибка 503)
-    for attempt in range(5):
-        try:
-            response = client.models.generate_content(
-                model=target_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+    for model_name in candidate_models:
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
                 )
-            )
-            if response and response.text:
-                return response.text
-        except Exception as err:
-            err_str = str(err)
-            print(f"[GENERATOR LOG] {target_model} (Попытка {attempt+1}) ошибка: {err_str}")
-            
-            # Если сервер перегружен (503 / UNAVAILABLE), ждем 2 секунды и пробуем снова
-            if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
-                time.sleep(2)
-                continue
-            else:
-                raise err
+                if response and response.text:
+                    return response.text
+            except Exception as err:
+                err_str = str(err)
+                print(f"[GENERATOR LOG] {model_name} (Urinish {attempt+1}) xatosi: {err_str}")
+                
+                # Server band bo'lsa (503), biroz kutib qayta urinib ko'radi
+                if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                else:
+                    # Model topilmasa (404), keyingi modelga o'tadi
+                    break
 
-    raise Exception("Модель Gemini 3.6 Flash перегружена. Попробуйте еще раз через несколько секунд.")
+    raise Exception("Barcha Gemini modellari band yoki javob bermadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
@@ -83,10 +89,10 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     try:
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
     except Exception as e:
-        print(f"[GENERATOR ERROR] API Error: {e}")
+        print(f"[GENERATOR ERROR] API Xatosi: {e}")
         raw_response = ""
 
-    # Очистка JSON
+    # JSON matnini tozalash
     clean_text = raw_response.strip()
     clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE).strip()
@@ -108,7 +114,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     except Exception:
         pass
 
-    # Резервный вариант на случай глобального сбоя API
+    # Kutilmagan uzilish holati uchun zaxira slaydlar
     return [
         {
             "title": topic,
