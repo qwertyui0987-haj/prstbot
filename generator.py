@@ -14,32 +14,44 @@ from pptx.enum.text import PP_ALIGN
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 def _get_groq_response_sync(prompt: str) -> str:
-    """Groq API orqali Llama-3 modeliga so'rov yuborish"""
+    """Groq API orqali Llama modeliga so'rov yuborish"""
     if not GROQ_API_KEY:
         raise Exception("GROQ_API_KEY topilmadi! Railway Variables bo'limiga GROQ_API_KEY ni qo'shing.")
 
     client = Groq(api_key=GROQ_API_KEY)
 
-    response = client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": "Siz faqat va faqat standart JSON formatida javob beradigan yordamchisiz. Boshqa hech qanday kirish yoki chiqish matnlari yozmang."
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-        model="llama-3.3-70b-versatile",
-        temperature=0.3,
-        response_format={"type": "json_object"}
-    )
+    # Groq'da mavjud va amaldagi rasmiy modellar
+    candidate_models = [
+        "llama-3.1-80b-instant",
+        "llama3-70b-8192",
+        "llama3-8b-8192"
+    ]
 
-    if response.choices and len(response.choices) > 0:
-        return response.choices[0].message.content
+    for model_name in candidate_models:
+        try:
+            response = client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Siz faqat va faqat standart JSON formatida javob beradigan yordamchisiz. Boshqa hech qanday kirish yoki chiqish matnlari yozmang."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                model=model_name,
+                temperature=0.3,
+                response_format={"type": "json_object"}
+            )
 
-    raise Exception("Groq API dan bo'sh javob qaytdi.")
+            if response.choices and len(response.choices) > 0:
+                return response.choices[0].message.content
+        except Exception as err:
+            print(f"[GENERATOR LOG] Groq model {model_name} xatosi: {err}")
+            continue
+
+    raise Exception("Groq modellari javob bermadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
@@ -92,7 +104,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     except Exception as e:
         print(f"[PARSER ERROR] JSON ni o'qishda xatolik: {e}")
 
-    # Agar API da kutilmagan xatolik bo'lsa, zaxira slaydlar
+    # Agar API da xatolik bo'lsa, zaxira slaydlar
     return [
         {
             "title": topic,
@@ -178,4 +190,5 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
     return output_filename
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
-    return await asyncio-to_thread(_build_pptx_sync, slides_data, output_filename)
+    # Nuqta bilan to'g'rilangan sintaksis (asyncio.to_thread)
+    return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
