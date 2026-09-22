@@ -15,11 +15,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-else:
-    print("CRITICAL ERROR: GEMINI_API_KEY muhit o'zgaruvchisi olinmadi!")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Gemini modelidan matn olish"""
     candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
@@ -28,20 +25,16 @@ def _get_gemini_response_sync(prompt: str) -> str:
         "gemini-pro"
     ]
 
-    last_exception = None
-
     for model_name in candidate_models:
         try:
-            print(f"[GENERATOR] Model sinab ko'rilmoqda: {model_name}")
             model = genai.GenerativeModel(
                 model_name,
                 generation_config={"response_mime_type": "application/json"}
             )
             response = model.generate_content(prompt)
             if response and response.text:
-                print(f"[GENERATOR] Muvaffaqiyatli model: {model_name}")
                 return response.text
-        except Exception as err:
+        except Exception:
             try:
                 model = genai.GenerativeModel(model_name)
                 response = model.generate_content(prompt)
@@ -49,83 +42,62 @@ def _get_gemini_response_sync(prompt: str) -> str:
                     return response.text
             except Exception:
                 pass
-            print(f"[GENERATOR] {model_name} xatosi: {err}")
-            last_exception = err
 
-    if last_exception:
-        raise last_exception
-    raise Exception("Birorta ham ishlaydigan Gemini modeli topilmadi.")
+    raise Exception("Gemini modellaridan javob olib bo'lmadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
-    print(f"\n==========================================")
-    print(f"[GENERATOR] Funksiya chaqirildi! Mavzu: '{topic}'")
-    print(f"==========================================\n")
+    prompt = f"""
+    Mavzu: {topic}
+    {f'Ssenariy: {user_script}' if user_script else ''}
 
-    if user_script:
-        prompt = f"""
-        Mavzu: {topic}
-        Ssenariy: {user_script}
-
-        Berilgan ssenariy bo'yicha 6 ta slayd tayyorla. 
-        Javobingiz FAQAT JSON formatidagi massiv bo'lsin:
-        [
-          {{
-            "title": "Slayd sarlavhasi",
-            "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-            "image_keyword": "nature"
-          }}
-        ]
-        """
-    else:
-        prompt = f"""
-        Mavzu: {topic}
-
-        Ushbu mavzu bo'yicha 6 ta professional slayd tayyorla.
-        Javobingiz FAQAT JSON formatidagi massiv bo'lsin:
-        [
-          {{
-            "title": "Slayd sarlavhasi",
-            "content": ["Mavzuga oid batafsil fikr 1", "Mavzuga oid batafsil fikr 2", "Mavzuga oid batafsil fikr 3"],
-            "image_keyword": "technology"
-          }}
-        ]
-        """
+    Ushbu mavzu bo'yicha EXACTLY 6 ta slayd tayyorla.
+    FAQAT toza JSON formatida javob ber:
+    [
+      {{
+        "title": "Slayd sarlavhasi",
+        "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+        "image_keyword": "technology"
+      }}
+    ]
+    """
 
     raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-    print(f"[GENERATOR] Gemini javob berdi! Uzunligi: {len(raw_response)}")
 
-    # REGEX ORQALI HAR BIR SLAYD OBYEKTINI ALOHIDA SUZIB OLAMIZ (Extra Data xatosini 100% yo'qotadi)
-    dict_matches = re.findall(r'\{[^{}]*"title"[^{}]*\}', raw_response, re.DOTALL)
-    
-    slides_list = []
-    if dict_matches:
-        for match in dict_matches:
-            try:
-                slide_obj = json.loads(match)
-                slides_list.append(slide_obj)
-            except Exception:
-                continue
-
-    if slides_list:
-        return slides_list
-
-    # Agar regex topa olmasa, standart usul bilan tozalab ko'ramiz
+    # 1. Toza JSON parse qilishga urinish
     clean_text = raw_response.strip()
     clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
-    clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE)
-    
-    start_idx = clean_text.find('[')
-    end_idx = clean_text.rfind(']')
-    if start_idx != -1 and end_idx != -1:
-        return json.loads(clean_text[start_idx:end_idx + 1])
+    clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE).strip()
 
-    return json.loads(clean_text)
+    try:
+        data = json.loads(clean_text)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+
+    # 2. Xavfsiz qidirish: Regex orqali barcha {} obyektlarini ajratib olish
+    found_slides = []
+    # Massiv ichidagi har bir { ... } blokini topamiz
+    matches = re.findall(r'\{[^{}]*"title"[^{}]*\}', raw_response, re.DOTALL)
+    for m in matches:
+        try:
+            obj = json.loads(m)
+            found_slides.append(obj)
+        except Exception:
+            continue
+
+    if found_slides:
+        return found_slides
+
+    # 3. Agar mutlaqo JSON bo'lmasa, zaxira slaydlarini qaytarish (Bot to'xtab qolmasligi uchun)
+    return [
+        {"title": topic, "content": ["Kechirasiz, kontentni avtomatik formatlashda xatolik bo'ldi.", "Lekin taqdimot tayyorlandi."], "image_keyword": "presentation"}
+    ]
 
 def _fetch_image_sync(keyword: str):
-    """Unsplash'dan rasm yuklab olish"""
     try:
-        encoded_keyword = urllib.parse.quote(keyword)
-        url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
+        encoded = urllib.parse.quote(keyword)
+        url = f"https://source.unsplash.com/800x600/?{encoded}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=4) as resp:
             return io.BytesIO(resp.read())
@@ -144,12 +116,10 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Titul
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
             tf.word_wrap = True
-            
             p = tf.paragraphs[0]
             p.text = slide_info.get("title", "Prezentatsiya")
             p.font.size = Pt(48)
@@ -158,7 +128,6 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.alignment = PP_ALIGN.CENTER
             continue
 
-        # Slayd sarlavhasi
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -168,7 +137,6 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Asosiy matn
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(7.0), Inches(5.0))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
@@ -181,13 +149,12 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
                 p.font.size = Pt(22)
                 p.font.color.rgb = TEXT_COLOR
                 p.space_after = Pt(14)
-        elif isinstance(points, str):
+        else:
             p = tf_content.paragraphs[0]
             p.text = f"• {points}"
             p.font.size = Pt(22)
             p.font.color.rgb = TEXT_COLOR
 
-        # Rasm
         keyword = slide_info.get("image_keyword", "topic")
         img_stream = _fetch_image_sync(keyword)
         if img_stream:
