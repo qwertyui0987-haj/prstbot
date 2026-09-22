@@ -1,0 +1,5 @@
+aiogram==3.10.0
+google-generativeai
+python-pptx
+aiohttp
+python-dotenv
