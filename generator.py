@@ -17,11 +17,12 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 def _get_gemini_response_sync(prompt: str) -> str:
+    # Eng barqaror modellarni birinchi o'ringa qo'yamiz
     candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
         "gemini-1.5-pro",
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
         "gemini-pro"
     ]
 
@@ -46,52 +47,102 @@ def _get_gemini_response_sync(prompt: str) -> str:
     raise Exception("Gemini modellaridan javob olib bo'lmadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
-    prompt = f"""
-    Mavzu: {topic}
-    {f'Ssenariy: {user_script}' if user_script else ''}
+    if user_script:
+        prompt = f"""
+        Mavzu: {topic}
+        Ssenariy: {user_script}
 
-    Ushbu mavzu bo'yicha EXACTLY 6 ta slayd tayyorla.
-    FAQAT toza JSON formatida javob ber:
-    [
-      {{
-        "title": "Slayd sarlavhasi",
-        "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-        "image_keyword": "technology"
-      }}
-    ]
-    """
+        Vazifa: Ushbu ssenariy bo'yicha 6 ta slayd yaratib ber.
+        Javobingiz faqat quyidagi standart JSON massivi bo'lsin:
+        [
+          {{
+            "title": "Slayd 1 Sarlavhasi",
+            "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+            "image_keyword": "business"
+          }}
+        ]
+        """
+    else:
+        prompt = f"""
+        Mavzu: {topic}
 
-    raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
+        Vazifa: Ushbu mavzu bo'yicha 6 ta slaydli prezentatsiya yarat.
+        Javobingiz faqat quyidagi standart JSON massivi bo'lsin:
+        [
+          {{
+            "title": "Slayd 1 Sarlavhasi",
+            "content": ["Muammo bayoni", "Tahlil va tafsilot", "Xulosa"],
+            "image_keyword": "technology"
+          }}
+        ]
+        """
 
-    # 1. Toza JSON parse qilishga urinish
+    try:
+        raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
+    except Exception as e:
+        print(f"[GENERATOR ERROR] Gemini API xatosi: {e}")
+        raw_response = ""
+
+    # 1. Markdown va ortiqcha belgilarni tozalash
     clean_text = raw_response.strip()
     clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE).strip()
 
+    # 2. To'g'ridan-to'g'ri JSON parsing
     try:
         data = json.loads(clean_text)
-        if isinstance(data, list):
+        if isinstance(data, list) and len(data) > 0:
             return data
+        elif isinstance(data, dict):
+            for v in data.values():
+                if isinstance(v, list) and len(v) > 0:
+                    return v
+            return [data]
     except Exception:
         pass
 
-    # 2. Xavfsiz qidirish: Regex orqali barcha {} obyektlarini ajratib olish
-    found_slides = []
-    # Massiv ichidagi har bir { ... } blokini topamiz
-    matches = re.findall(r'\{[^{}]*"title"[^{}]*\}', raw_response, re.DOTALL)
-    for m in matches:
-        try:
-            obj = json.loads(m)
-            found_slides.append(obj)
-        except Exception:
-            continue
+    # 3. Massiv chegaralarini topish [ ... ]
+    try:
+        start_idx = clean_text.find('[')
+        end_idx = clean_text.rfind(']')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            json_str = clean_text[start_idx:end_idx + 1]
+            data = json.loads(json_str)
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
 
-    if found_slides:
-        return found_slides
-
-    # 3. Agar mutlaqo JSON bo'lmasa, zaxira slaydlarini qaytarish (Bot to'xtab qolmasligi uchun)
+    # 4. ZAXIRA EHTIYOT CHORASI (Agar JSON umuman o'qilmasa, bot to'xtab qolmasligi uchun)
+    print("[GENERATOR WARNING] JSON parse qilib bo'lmadi, zaxira slaydlar ishlatilmoqda.")
     return [
-        {"title": topic, "content": ["Kechirasiz, kontentni avtomatik formatlashda xatolik bo'ldi.", "Lekin taqdimot tayyorlandi."], "image_keyword": "presentation"}
+        {
+            "title": topic,
+            "content": [
+                f"{topic} mavzusi bo'yicha kirish va asosiy tushunchalar.",
+                "Mavzuning dolzarbligi va amaliy ahamiyati.",
+                "Kelajakdagi rivojlanish istiqbollari va xulosalar."
+            ],
+            "image_keyword": "presentation"
+        },
+        {
+            "title": "Asosiy tahlil",
+            "content": [
+                "Tahliliy ma'lumotlar va muhim ko'rsatkichlar.",
+                "Tizimning ishlash prinsiplari.",
+                "Amaliyotdagi muammolar va yechimlar."
+            ],
+            "image_keyword": "analytics"
+        },
+        {
+            "title": "Xulosa va Takliflar",
+            "content": [
+                "Erishilgan natijalar va tahlil.",
+                "Kelgusidagi vazifalar.",
+                "E'tiboringiz uchun rahmat!"
+            ],
+            "image_keyword": "success"
+        }
     ]
 
 def _fetch_image_sync(keyword: str):
@@ -116,6 +167,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
+        # 1-Slayd: Titul
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
