@@ -5,53 +5,45 @@ import re
 import asyncio
 import urllib.request
 import urllib.parse
-from groq import Groq
+from openai import OpenAI
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-def _get_groq_response_sync(prompt: str) -> str:
-    """Groq API orqali amaldagi faol modellarga so'rov yuborish"""
-    if not GROQ_API_KEY:
-        raise Exception("GROQ_API_KEY topilmadi! Railway Variables bo'limiga GROQ_API_KEY ni qo'shing.")
+def _get_openai_response_sync(prompt: str) -> str:
+    """Запрос к стабильной модели GPT-4o-mini через OpenAI API"""
+    if not OPENAI_API_KEY:
+        raise Exception("OPENAI_API_KEY не найден! Добавьте OPENAI_API_KEY в Railway Variables.")
 
-    client = Groq(api_key=GROQ_API_KEY)
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
-    # Groq platformasida hozirda faol bo'lgan rasmiy modellar
-    candidate_models = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768"
-    ]
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Siz faqat va faqat standart JSON formatida javob beradigan yordamchisiz. Boshqa hech qanday kirish yoki chiqish matnlari yozmang."
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
 
-    for model_name in candidate_models:
-        try:
-            response = client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Siz faqat va faqat standart JSON formatida javob beradigan yordamchisiz. Boshqa hech qanday kirish yoki chiqish matnlari yozmang."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                model=model_name,
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
+        if response.choices and len(response.choices) > 0:
+            return response.choices[0].message.content
+    except Exception as err:
+        print(f"[GENERATOR LOG] Ошибка OpenAI API: {err}")
+        raise err
 
-            if response.choices and len(response.choices) > 0:
-                return response.choices[0].message.content
-        except Exception as err:
-            print(f"[GENERATOR LOG] Groq model {model_name} xatosi: {err}")
-            continue
-
-    raise Exception("Groq modellari javob bermadi.")
+    raise Exception("От OpenAI API получен пустой ответ.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
@@ -89,12 +81,12 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         """
 
     try:
-        raw_response = await asyncio.to_thread(_get_groq_response_sync, prompt)
+        raw_response = await asyncio.to_thread(_get_openai_response_sync, prompt)
     except Exception as e:
-        print(f"[GENERATOR ERROR] Groq API Xatosi: {e}")
+        print(f"[GENERATOR ERROR] OpenAI API error: {e}")
         raw_response = ""
 
-    # JSON obyektini parse qilish
+    # Парсинг JSON
     try:
         data = json.loads(raw_response)
         if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
@@ -102,9 +94,9 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         elif isinstance(data, list) and len(data) > 0:
             return data
     except Exception as e:
-        print(f"[PARSER ERROR] JSON ni o'qishda xatolik: {e}")
+        print(f"[PARSER ERROR] Ошибка чтения JSON: {e}")
 
-    # Agar API da xatolik bo'lsa, zaxira slaydlar
+    # Запасные слайды в случае сбоя сети
     return [
         {
             "title": topic,
