@@ -3,57 +3,43 @@ import os
 import io
 import re
 import asyncio
-import time
 import urllib.request
 import urllib.parse
-from google import genai
-from google.genai import types
+from groq import Groq
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-def _get_gemini_response_sync(prompt: str) -> str:
-    if not GEMINI_API_KEY:
-        raise Exception("GEMINI_API_KEY olinmadi! Railway Variables bo'limini tekshiring.")
+def _get_groq_response_sync(prompt: str) -> str:
+    """Groq API orqali Llama-3 modeliga so'rov yuborish"""
+    if not GROQ_API_KEY:
+        raise Exception("GROQ_API_KEY topilmadi! Railway Variables bo'limiga GROQ_API_KEY ni qo'shing.")
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    # Navbati bilan sinab ko'riladigan modellar
-    candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-3.6-flash"
-    ]
+    client = Groq(api_key=GROQ_API_KEY)
 
-    for model_name in candidate_models:
-        for attempt in range(3):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json"
-                    )
-                )
-                if response and response.text:
-                    return response.text
-            except Exception as err:
-                err_str = str(err)
-                print(f"[GENERATOR LOG] {model_name} (Urinish {attempt+1}) xatosi: {err_str}")
-                
-                # Server band bo'lsa (503), biroz kutib qayta urinib ko'radi
-                if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                else:
-                    # Model topilmasa (404), keyingi modelga o'tadi
-                    break
+    response = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "Siz faqat va faqat standart JSON formatida javob beradigan yordamchisiz. Boshqa hech qanday kirish yoki chiqish matnlari yozmang."
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="llama-3.3-70b-versatile",
+        temperature=0.3,
+        response_format={"type": "json_object"}
+    )
 
-    raise Exception("Barcha Gemini modellari band yoki javob bermadi.")
+    if response.choices and len(response.choices) > 0:
+        return response.choices[0].message.content
+
+    raise Exception("Groq API dan bo'sh javob qaytdi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
@@ -62,59 +48,51 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
-        Javobingiz faqat quyidagi standart JSON massivi bo'lsin:
-        [
-          {{
-            "title": "Slayd sarlavhasi",
-            "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-            "image_keyword": "business"
-          }}
-        ]
+        Javobingiz faqat quyidagi JSON tuzilmasida bo'lishi shart:
+        {{
+          "slides": [
+            {{
+              "title": "Slayd sarlavhasi",
+              "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+              "image_keyword": "business"
+            }}
+          ]
+        }}
         """
     else:
         prompt = f"""
         Mavzu: {topic}
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
-        Javobingiz faqat quyidagi standart JSON massivi bo'lsin:
-        [
-          {{
-            "title": "Slayd sarlavhasi",
-            "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-            "image_keyword": "technology"
-          }}
-        ]
+        Javobingiz faqat quyidagi JSON tuzilmasida bo'lishi shart:
+        {{
+          "slides": [
+            {{
+              "title": "Slayd sarlavhasi",
+              "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+              "image_keyword": "technology"
+            }}
+          ]
+        }}
         """
 
     try:
-        raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
+        raw_response = await asyncio.to_thread(_get_groq_response_sync, prompt)
     except Exception as e:
-        print(f"[GENERATOR ERROR] API Xatosi: {e}")
+        print(f"[GENERATOR ERROR] Groq API Xatosi: {e}")
         raw_response = ""
 
-    # JSON matnini tozalash
-    clean_text = raw_response.strip()
-    clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
-    clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE).strip()
-
+    # JSON obyektini parse qilish
     try:
-        data = json.loads(clean_text)
-        if isinstance(data, list) and len(data) > 0:
+        data = json.loads(raw_response)
+        if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
+            return data["slides"]
+        elif isinstance(data, list) and len(data) > 0:
             return data
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[PARSER ERROR] JSON ni o'qishda xatolik: {e}")
 
-    try:
-        start_idx = clean_text.find('[')
-        end_idx = clean_text.rfind(']')
-        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-            data = json.loads(clean_text[start_idx:end_idx + 1])
-            if isinstance(data, list):
-                return data
-    except Exception:
-        pass
-
-    # Kutilmagan uzilish holati uchun zaxira slaydlar
+    # Agar API da kutilmagan xatolik bo'lsa, zaxira slaydlar
     return [
         {
             "title": topic,
@@ -200,4 +178,4 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
     return output_filename
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
-    return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
+    return await asyncio-to_thread(_build_pptx_sync, slides_data, output_filename)
