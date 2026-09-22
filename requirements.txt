@@ -1,4 +1,4 @@
-google-genai
+groq
 python-pptx
 aiogram
 aiohttp
