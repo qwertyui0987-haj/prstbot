@@ -74,10 +74,13 @@ async def handle_standard(message: types.Message, state: FSMContext):
         if os.path.exists(file_path):
             os.remove(file_path)
     except Exception as e:
-        logging.error(f"Xatolik: {e}")
-        await message.answer("❌ Prezentatsiya yaratishda xatolik yuz berdi. Qayta urinib ko'ring.")
+        logging.exception(f"XATOLIK YUZ BERDI: {e}")
+        await message.answer(f"❌ Prezentatsiya yaratishda xatolik yuz berdi:\n`{e}`", parse_mode="Markdown")
     finally:
-        await msg.delete()
+        try:
+            await msg.delete()
+        except Exception:
+            pass
         await state.clear()
 
 @dp.message(PresentationState.waiting_for_topic)
@@ -94,13 +97,22 @@ async def handle_premium(message: types.Message, state: FSMContext):
         if os.path.exists(file_path):
             os.remove(file_path)
     except Exception as e:
-        logging.error(f"Xatolik: {e}")
-        await message.answer("❌ Prezentatsiya yaratishda xatolik yuz berdi. Qayta urinib ko'ring.")
+        logging.exception(f"XATOLIK YUZ BERDI: {e}")
+        await message.answer(f"❌ Prezentatsiya yaratishda xatolik yuz berdi:\n`{e}`", parse_mode="Markdown")
     finally:
-        await msg.delete()
+        try:
+            await msg.delete()
+        except Exception:
+            pass
         await state.clear()
 
-# --- Render WebService uchun soxta (Dummy) HTTP Server ---
+# --- Oddiy matn yuborilganda ham ishlaydigan Handler (Tugma bosilmagan bo'lsa ham) ---
+@dp.message(F.text)
+async def handle_direct_text(message: types.Message, state: FSMContext):
+    await state.set_state(PresentationState.waiting_for_topic)
+    await handle_premium(message, state)
+
+# --- Render WebService uchun HTTP Server ---
 async def handle_ping(request):
     return web.Response(text="Bot is running active 24/7!")
 
