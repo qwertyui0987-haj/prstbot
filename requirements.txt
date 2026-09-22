@@ -1,5 +1,5 @@
-aiogram==3.10.0
-google-generativeai
+google-generativeai>=0.8.0
 python-pptx
+aiogram
 aiohttp
 python-dotenv
