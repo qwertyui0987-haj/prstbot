@@ -19,8 +19,7 @@ else:
     print("CRITICAL ERROR: GEMINI_API_KEY muhit o'zgaruvchisi olinmadi!")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Modellarni birma-bir sinab ko'rish va ishlaydiganini topish"""
-    # Tekshiriladigan modellar ro'yxati (eng yangisidan boshlab)
+    """Ishlaydigan Gemini modelini avtomatik sinab ko'rish"""
     candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
@@ -31,7 +30,6 @@ def _get_gemini_response_sync(prompt: str) -> str:
 
     last_exception = None
 
-    # 1. Ro'yxatdagi modellar bilan urinib ko'ramiz
     for model_name in candidate_models:
         try:
             print(f"[GENERATOR] Model sinab ko'rilmoqda: {model_name}")
@@ -44,7 +42,7 @@ def _get_gemini_response_sync(prompt: str) -> str:
             print(f"[GENERATOR] {model_name} xatosi: {err}")
             last_exception = err
 
-    # 2. Agar ro'yxatdagilar ishlamasa, akkauntdagi mavjud modellar ro'yxatidan izlaymiz
+    # Agar ro'yxatdagilar ishlamasa, akkauntdagi mavjud modellardan izlaymiz
     try:
         print("[GENERATOR] Akkauntdagi mavjud modellar ro'yxati olinmoqda...")
         for m in genai.list_models():
@@ -60,7 +58,6 @@ def _get_gemini_response_sync(prompt: str) -> str:
     except Exception as list_err:
         print(f"[GENERATOR] ListModels xatosi: {list_err}")
 
-    # Agar birontasi ham ishlamasa xatoni otamiz
     if last_exception:
         raise last_exception
     raise Exception("Birorta ham ishlaydigan Gemini modeli topilmadi.")
@@ -76,7 +73,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Berilgan ssenariy bo'yicha 6 ta slayd tayyorla. 
-        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
+        Javobingiz FAQAT va FAQAT JSON formatida bo'lsin. Hech qanday ```json yoki markdown ishlatmang:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -89,8 +86,8 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         prompt = f"""
         Mavzu: {topic}
 
-        Ushbu mavzu bo'yicha 6 ta professional va batafsil slayd tayyorla.
-        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
+        Ushbu mavzu bo'yicha 6 ta professional slayd tayyorla.
+        Javobingiz FAQAT va FAQAT JSON formatida bo'lsin. Hech qanday ```json yoki markdown ishlatmang:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -101,17 +98,26 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         """
 
     raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-    print(f"[GENERATOR] Gemini javob berdi! Javob uzunligi: {len(raw_response)}")
+    print(f"[GENERATOR] Gemini javob berdi! Uzunligi: {len(raw_response)}")
 
-    json_match = re.search(r'\[.*\]', raw_response, re.DOTALL)
+    # Matnni Markdown teglardan (```json va ```) tozalaymiz
+    clean_text = raw_response.strip()
+    clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
+    clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE)
+    clean_text = clean_text.strip()
+
+    # Aniq JSON massivini [ ... ] ajratib olamiz
+    json_match = re.search(r'\[.*\]', clean_text, re.DOTALL)
     if json_match:
         return json.loads(json_match.group(0))
-    return json.loads(raw_response.strip())
+
+    return json.loads(clean_text)
 
 def _fetch_image_sync(keyword: str):
+    """Mavzuga mos rasmlarni Unsplash xizmatidan yuklab olish"""
     try:
         encoded_keyword = urllib.parse.quote(keyword)
-        url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
+        url = f"[https://source.unsplash.com/800x600/](https://source.unsplash.com/800x600/)?{encoded_keyword}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=4) as resp:
             return io.BytesIO(resp.read())
@@ -130,7 +136,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Titul
+        # 1-Slayd: Titul (Ortiqcha yozuvlarsiz)
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
