@@ -6,6 +6,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
+from aiohttp import web
 from dotenv import load_dotenv
 
 from generator import generate_presentation_content, create_pptx_file
@@ -13,6 +14,9 @@ from generator import generate_presentation_content, create_pptx_file
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Render avtomatik ravishda PORT muhit o'zgaruvchisini beradi (aks holda 8080 ishlatiladi)
+PORT = int(os.getenv("PORT", 8080))
+
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
@@ -56,12 +60,10 @@ async def process_premium_plan(callback: types.CallbackQuery, state: FSMContext)
     )
     await callback.answer()
 
-# Standard Tarif uchun ishlovchi handler
 @dp.message(PresentationState.waiting_for_script)
 async def handle_standard(message: types.Message, state: FSMContext):
     msg = await message.answer("⏳ Gemini AI ssenariyingizni qayta ishlamoqda va prezentatsiya tayyorlamoqda...")
-    
-    topic = message.text[:50] # Sarlavha uchun qisqa matn
+    topic = message.text[:50]
     slides_data = await generate_presentation_content(topic=topic, user_script=message.text)
     
     file_path = f"pres_{message.from_user.id}.pptx"
@@ -75,11 +77,9 @@ async def handle_standard(message: types.Message, state: FSMContext):
         os.remove(file_path)
     await state.clear()
 
-# Premium Tarif uchun ishlovchi handler
 @dp.message(PresentationState.waiting_for_topic)
 async def handle_premium(message: types.Message, state: FSMContext):
     msg = await message.answer("⏳ Gemini AI mavzu bo'yicha slaydlar matnini o'zi tuzmoqda va PPTX tayyorlamoqda...")
-    
     slides_data = await generate_presentation_content(topic=message.text)
     
     file_path = f"pres_{message.from_user.id}.pptx"
@@ -93,7 +93,22 @@ async def handle_premium(message: types.Message, state: FSMContext):
         os.remove(file_path)
     await state.clear()
 
+# --- Render WebService uchun soxta (Dummy) HTTP Server ---
+async def handle_ping(request):
+    return web.Response(text="Bot is running active 24/7!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logging.info(f"Web server started on port {PORT}")
+
 async def main():
+    # Web server va Telegram Bot Polling-ni parallel ravishda ishga tushiramiz
+    await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
