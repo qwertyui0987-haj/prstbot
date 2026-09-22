@@ -3,3 +3,4 @@ python-pptx
 aiogram
 aiohttp
 python-dotenv
+json-repair
