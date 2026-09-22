@@ -3,6 +3,7 @@ import os
 import io
 import asyncio
 import urllib.request
+import urllib.parse
 import google.generativeai as genai
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -14,8 +15,6 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Gemini API bilan muloqot qilish"""
-    # So'rov uchun barqaror model
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
     return response.text
@@ -26,13 +25,15 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
         Ssenariy: {user_script}
 
-        Vazifa: Berilgan ssenariy bo'yicha 6 ta slayd tayyorla.
-        Matnlar to'liq va mazmunli o'zbek tilida bo'lsin.
-        Javobni FAQAT quyidagi JSON formatida ber:
+        Vazifa: Berilgan ssenariy bo'yicha 6 ta mukammal va mazmunli slayd yarat.
+        Har bir slayd uchun inglizcha rasm kalit so'zini (image_keyword) ko'rsat.
+        
+        Javobni FAQAT JSON formatida qaytar:
         [
           {{
             "title": "Slayd sarlavhasi",
-            "content": ["To'liq ma'lumotli punkt 1", "To'liq ma'lumotli punkt 2", "To'liq ma'lumotli punkt 3"]
+            "content": ["To'liq ma'lumotli punkt 1", "To'liq ma'lumotli punkt 2", "To'liq ma'lumotli punkt 3"],
+            "image_keyword": "nature"
           }}
         ]
         """
@@ -40,14 +41,16 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         prompt = f"""
         Mavzu: {topic}
 
-        Vazifa: Ushbu mavzu bo'yicha 6 ta batafsil va mazmunli slayd yarat. 
-        Har bir slayd uchun chuqur mazmunli 3-4 ta punkt yoz.
-        Barcha matnlar o'zbek tilida bo'lsin.
-        Javobni FAQAT toza JSON formatida ber (hech qanday qo'shimcha matnlarsiz):
+        Vazifa: Ushbu mavzuda 6 ta batafsil va professional slayd tayyorla.
+        Matnlar o'zbek tilida, tushunarli va boy mazmunga ega bo'lsin.
+        Har bir slayd uchun inglizcha mos rasm kalit so'zini (image_keyword) ham ber.
+        
+        Javobni FAQAT JSON formatida qaytar:
         [
           {{
             "title": "Slayd sarlavhasi",
-            "content": ["Atrof-muhitni muhofaza qilishning ahamiyati...", "Insoniyat faoliyatining tabiatga ta'siri...", "Tadbirlar va ko'kalamzorlashtirish..."]
+            "content": ["Mavzuga oid batafsil fikr 1", "Mavzuga oid batafsil fikr 2", "Mavzuga oid batafsil fikr 3"],
+            "image_keyword": "environment"
           }}
         ]
         """
@@ -56,100 +59,70 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
         clean_text = raw_response.strip()
         
-        # Markdown belgilarini tozalash
         if "```json" in clean_text:
             clean_text = clean_text.split("```json")[1].split("```")[0].strip()
         elif "```" in clean_text:
             clean_text = clean_text.split("```")[1].split("```")[0].strip()
             
-        slides_data = json.loads(clean_text)
-        return slides_data
+        return json.loads(clean_text)
     except Exception as e:
-        print(f"!!! GEMINI API YOKI JSON XATOSI: {e} !!!")
-        # Xatolik yuz bersa ham tushunarliroq va uzunroq ma'lumotlar
+        print(f"Gemini API xatosi: {e}")
         return [
             {
-                "title": f"{topic} haqida umumiy tushuncha",
-                "content": [
-                    "Ekologiya va atrof-muhit xavfsizligi bugungi kunda eng dolzarb masalalardan biridir.",
-                    "Tabiiy resurslardan oqilona foydalanish kelajak avlod uchun juda muhim hisoblanadi.",
-                    "Sanoat va maishiy chiqindilarni qayta ishlash darajasini oshirish lozim."
-                ]
-            },
-            {
-                "title": "Asosiy Muammolar va Ularning Oqibatlari",
-                "content": [
-                    "Havo hamda suv havzalarining sanoat chiqindilari bilan ifloslanishi.",
-                    "Iqlim o'zgarishi va global issiqlik muammosining ortib borishi.",
-                    "O'simlik va hayvonot dunyosidagi bioxilma-xillikning kamayishi."
-                ]
-            },
-            {
-                "title": "Amaliy Yechimlar va Xulosa",
-                "content": [
-                    "Yashil energiyaga (quyosh, shamol) o'tishni jadallashtirish.",
-                    "Aholi o'rtasida ekologik madaniyatni oshirish hamda ko'kalamzorlashtirish.",
-                    "Qayta tiklanuvchi manbalardan va ekologik toza texnologiyalardan foydalanish."
-                ]
+                "title": topic,
+                "content": ["Kirish qismi va mavzu bo'yicha umumiy ma'lumotlar.", "Asosiy tushunchalar hamda ularning tahlili."],
+                "image_keyword": "presentation"
             }
         ]
 
-def _fetch_image_sync():
-    """Slaydlar uchun sifatli va barqaror rasm yuklash"""
+def _fetch_image_sync(keyword: str):
+    """Mavzuga mos rasmlarni yuklab olish"""
     try:
-        url = "https://picsum.photos/800/600"
+        encoded_keyword = urllib.parse.quote(keyword)
+        url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as resp:
             return io.BytesIO(resp.read())
-    except Exception as e:
-        print(f"Rasm yuklashda xato: {e}")
+    except Exception:
         return None
 
 def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
-    """PPTX faylini yaratish va shakllantirish"""
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    PRIMARY_COLOR = RGBColor(15, 32, 67)
-    ACCENT_COLOR = RGBColor(0, 122, 255)
-    TEXT_COLOR = RGBColor(50, 50, 50)
+    PRIMARY_COLOR = RGBColor(20, 35, 60)
+    TEXT_COLOR = RGBColor(40, 40, 40)
 
     for i, slide_info in enumerate(slides_data):
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Muqova
+        # 1-Slayd: Titul (AI haqida hech qanday yozuvsiz)
         if i == 0:
-            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.2), Inches(11.333), Inches(3.0))
+            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
             tf.word_wrap = True
             
             p = tf.paragraphs[0]
             p.text = slide_info.get("title", "Prezentatsiya")
-            p.font.size = Pt(40)
+            p.font.size = Pt(48)
             p.font.bold = True
             p.font.color.rgb = PRIMARY_COLOR
             p.alignment = PP_ALIGN.CENTER
-            
-            p2 = tf.add_paragraph()
-            p2.text = "\nTayyorladi: Sun'iy Intellekt (Gemini AI)"
-            p2.font.size = Pt(20)
-            p2.font.color.rgb = ACCENT_COLOR
-            p2.alignment = PP_ALIGN.CENTER
             continue
 
-        # Boshqa slaydlar
-        title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.5), Inches(11.7), Inches(1.0))
+        # Slayd sarlavhasi (Katta va aniq)
+        title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
         p_title = tf_title.paragraphs[0]
-        p_title.text = slide_info.get("title", f"Slayd {i+1}")
-        p_title.font.size = Pt(28)
+        p_title.text = slide_info.get("title", "")
+        p_title.font.size = Pt(34)
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Matn (Chap tomonda)
+        # Slayd matni (Shrift o'lchami 22pt)
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(6.8), Inches(5.0))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
@@ -158,17 +131,18 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         for idx, point in enumerate(points):
             p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
             p.text = f"• {point}"
-            p.font.size = Pt(17)
+            p.font.size = Pt(22)
             p.font.color.rgb = TEXT_COLOR
-            p.space_after = Pt(12)
+            p.space_after = Pt(16)
 
         # Rasm (O'ng tomonda)
-        img_stream = _fetch_image_sync()
+        keyword = slide_info.get("image_keyword", "topic")
+        img_stream = _fetch_image_sync(keyword)
         if img_stream:
             try:
                 slide.shapes.add_picture(img_stream, Inches(8.0), Inches(1.8), width=Inches(4.5))
-            except Exception as e:
-                print(f"Rasm joylashda xatolik: {e}")
+            except Exception:
+                pass
 
     prs.save(output_filename)
     return output_filename
