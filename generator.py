@@ -1,6 +1,7 @@
 import json
 import os
 import io
+import re
 import asyncio
 import urllib.request
 import urllib.parse
@@ -10,31 +11,39 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 
+# API kalitni tekshirish va sozlash
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    # Model va maxsus JSON rejimini yoqish
-    model = genai.GenerativeModel(
-        "gemini-1.5-flash",
-        generation_config={"response_mime_type": "application/json"}
-    )
-    response = model.generate_content(prompt)
-    return response.text
+    # Ishlaydigan model nomini tanlaymiz
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as err1:
+        print(f"gemini-1.5-flash xatosi: {err1}")
+        # Muqobil model bilan urinib ko'ramiz
+        model = genai.GenerativeModel("gemini-1.5-pro")
+        response = model.generate_content(prompt)
+        return response.text
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
+    if not GEMINI_API_KEY:
+        print("!!! DIQQAT: GEMINI_API_KEY topilmadi! .env yoki Render sozlamalarini tekshiring !!!")
+
     if user_script:
         prompt = f"""
         Mavzu: {topic}
         Ssenariy: {user_script}
 
-        Berilgan ssenariydan foydalanib 5-6 ta slayd tayyorla.
-        Javob FAQAT quyidagi JSON ro'yxati (array) bo'lishi shart:
+        Berilgan ssenariy bo'yicha 6 ta slayd tayyorla. 
+        Javobingiz faqat va faqat quyidagi JSON ko'rinishida bo'lsin, boshqa hech qanday so'z qo'shmang:
         [
           {{
             "title": "Slayd sarlavhasi",
-            "content": ["To'liq ma'lumot 1", "To'liq ma'lumot 2", "To'liq ma'lumot 3"],
+            "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
             "image_keyword": "nature"
           }}
         ]
@@ -43,71 +52,70 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         prompt = f"""
         Mavzu: {topic}
 
-        Ushbu mavzu bo'yicha 5-6 ta batafsil slayd tayyorla.
-        Javob FAQAT quyidagi JSON ro'yxati (array) bo'lishi shart:
+        Ushbu mavzu bo'yicha 6 ta professional slayd tayyorla.
+        Javobingiz faqat va faqat quyidagi JSON ko'rinishida bo'lsin, boshqa hech qanday kirish/chiqish so'zi yozmang:
         [
           {{
             "title": "Slayd sarlavhasi",
-            "content": ["Atrof-muhitni muhofaza qilish...", "Insoniyat faoliyatining ta'siri...", "Chiqindilarni qayta ishlash..."],
-            "image_keyword": "environment"
+            "content": ["Mavzuga oid batafsil fikr 1", "Mavzuga oid batafsil fikr 2", "Mavzuga oid batafsil fikr 3"],
+            "image_keyword": "technology"
           }}
         ]
         """
 
     try:
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-        return json.loads(raw_response)
+        print("--- GEMINI JAVOBI OLINDI ---")
+        
+        # Matn ichidan sof JSON ro'yxatini ajratib olish (Regex bilan)
+        json_match = re.search(r'\[.*\]', raw_response, re.DOTALL)
+        if json_match:
+            clean_json = json_match.group(0)
+            return json.loads(clean_json)
+        else:
+            return json.loads(raw_response.strip())
+
     except Exception as e:
-        print(f"!!! GEMINI API XATOSI: {e} !!!")
-        # Zaxira uchun kamida 5 ta to'liq slayd!
+        # API DA QANDAY XATO BO'LGANINI LOGGA CHIQARAMIZ
+        print(f"!!! GEMINI API ISHLAMADI! XATOLIK MATNI: {e} !!!")
+        
+        # Zaxira slaydlar (Mavzuga qarab o'zgaruvchan)
         return [
             {
-                "title": topic,
+                "title": f"{topic}",
                 "content": [
-                    "Ushbu mavzu bugungi kunda jamiyatimizda muhim o'rin tutadi.",
-                    "Asosiy tushunchalar va muammoning mohiyati ko'rib chiqiladi."
+                    f"{topic} mavzusining umumiy sharhi va mohiyati.",
+                    "Asosiy tushunchalar va o'rganiladigan masalalar."
                 ],
-                "image_keyword": "nature"
+                "image_keyword": "presentation"
             },
             {
-                "title": "Mavzuning Dolzarbligi",
+                "title": f"{topic}: Asosiy Yo'nalishlar",
                 "content": [
-                    "Zamonaviy texnologiyalar va atrof-muhit o'rtasidagi muvozanat.",
-                    "So'nggi yillarda kuzatilayotgan asosiy o'zgarishlar va ko'rsatkichlar.",
-                    "Inson salomatligi va xavfsizligiga ta'siri."
+                    "Soha va mavzuning asosiy yo'nalishlari hamda qamrovi.",
+                    "Rivojlanish va takomillashuv bosqichlari."
                 ],
-                "image_keyword": "earth"
+                "image_keyword": "ideas"
             },
             {
-                "title": "Asosiy Muammolar va Tahlil",
+                "title": f"{topic}: Muammolar va Yechimlar",
                 "content": [
-                    "Resurslardan unumsiz foydalanish va chiqindilar muammosi.",
-                    "Sanoat rivojlanishining salbiy oqibatlari.",
-                    "Ekotizim barqarorligini saqlashdagi qiyinchiliklar."
+                    "Bugungi kundagi eng muhim masalalar va ularning tahlili.",
+                    "Muammolarni bartaraf etishga qaratilgan amaliy takliflar."
                 ],
-                "image_keyword": "pollution"
+                "image_keyword": "solution"
             },
             {
-                "title": "Tavsiya va Yechimlar",
+                "title": f"{topic}: Xulosa",
                 "content": [
-                    "Muammoni hal etishga qaratilgan amaliy va samarali qadamlar.",
-                    "Zamonaviy yashil texnologiyalarni tatbiq etish.",
-                    "Aholi va yoshlar o'rtasida tushuntirish ishlarini olib borish."
+                    "Keltirilgan fikr va tahlillarning umumiy xulosalari.",
+                    "Kelajakdagi maqsad va kutilayotgan natijalar."
                 ],
-                "image_keyword": "green energy"
-            },
-            {
-                "title": "Xulosa",
-                "content": [
-                    "Barcha ko'rib chiqilgan masalalarning umumiy xulosasi.",
-                    "Kelajakdagi maqsad va istiqbolli rejalarni belgilab olish."
-                ],
-                "image_keyword": "success"
+                "image_keyword": "future"
             }
         ]
 
 def _fetch_image_sync(keyword: str):
-    """Mavzuga mos rasmlarni Unsplash xizmatidan olish"""
     try:
         encoded_keyword = urllib.parse.quote(keyword)
         url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
@@ -129,7 +137,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Titul (Hech qanday AI yozuvlarisiz)
+        # 1-Slayd: Titul
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
@@ -143,17 +151,17 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.alignment = PP_ALIGN.CENTER
             continue
 
-        # Sarlavha (Katta va aniq)
+        # Slayd sarlavhasi
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
         p_title = tf_title.paragraphs[0]
-        p_title.text = slide_info.get("title", f"{i+1}-Slayd")
+        p_title.text = slide_info.get("title", "")
         p_title.font.size = Pt(32)
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Asosiy matn (Tushunarli va 22pt o'lchamda)
+        # Asosiy matn
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(7.0), Inches(5.0))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
@@ -166,8 +174,8 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.font.color.rgb = TEXT_COLOR
             p.space_after = Pt(14)
 
-        # Rasm (O'ng tomonda)
-        keyword = slide_info.get("image_keyword", "nature")
+        # Rasm
+        keyword = slide_info.get("image_keyword", "topic")
         img_stream = _fetch_image_sync(keyword)
         if img_stream:
             try:
