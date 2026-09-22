@@ -5,6 +5,7 @@ import re
 import asyncio
 import urllib.request
 import urllib.parse
+from json_repair import repair_json
 import google.generativeai as genai
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -19,7 +20,7 @@ else:
     print("CRITICAL ERROR: GEMINI_API_KEY muhit o'zgaruvchisi olinmadi!")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Modelleri sırayla deneyerek JSON formatında yanıt alma"""
+    """Ishlaydigan Gemini modelini avtomatik sinab ko'rish"""
     candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
@@ -32,18 +33,16 @@ def _get_gemini_response_sync(prompt: str) -> str:
 
     for model_name in candidate_models:
         try:
-            print(f"[GENERATOR] Model deneniyor: {model_name}")
-            # JSON yanıt tipini zorunlu kılıyoruz
+            print(f"[GENERATOR] Model sinab ko'rilmoqda: {model_name}")
             model = genai.GenerativeModel(
                 model_name,
                 generation_config={"response_mime_type": "application/json"}
             )
             response = model.generate_content(prompt)
             if response and response.text:
-                print(f"[GENERATOR] Başarıyla kullanılan model: {model_name}")
+                print(f"[GENERATOR] Muvaffaqiyatli ishlatilgan model: {model_name}")
                 return response.text
         except Exception as err:
-            # Standart yapılandırma ile tekrar dene
             try:
                 model = genai.GenerativeModel(model_name)
                 response = model.generate_content(prompt)
@@ -51,16 +50,16 @@ def _get_gemini_response_sync(prompt: str) -> str:
                     return response.text
             except Exception:
                 pass
-            print(f"[GENERATOR] {model_name} hatası: {err}")
+            print(f"[GENERATOR] {model_name} xatosi: {err}")
             last_exception = err
 
     if last_exception:
         raise last_exception
-    raise Exception("Çalışan bir Gemini modeli bulunamadı.")
+    raise Exception("Birorta ham ishlaydigan Gemini modeli topilmadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     print(f"\n==========================================")
-    print(f"[GENERATOR] Çağrı alındı! Konu: '{topic}'")
+    print(f"[GENERATOR] Funksiya chaqirildi! Mavzu: '{topic}'")
     print(f"==========================================\n")
 
     if user_script:
@@ -69,7 +68,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Berilgan ssenariy bo'yicha 6 ta slayd tayyorla. 
-        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
+        Javobingiz FAQAT toza JSON formatidagi massiv bo'lsin. Hech qanday qo'shimcha matn yozmang:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -83,7 +82,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Ushbu mavzu bo'yicha 6 ta professional slayd tayyorla.
-        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
+        Javobingiz FAQAT toza JSON formatidagi massiv bo'lsin. Hech qanday qo'shimcha matn yozmang:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -94,26 +93,39 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         """
 
     raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-    print(f"[GENERATOR] Yanıt alındı. Uzunluk: {len(raw_response)}")
+    print(f"[GENERATOR] Gemini javob berdi! Uzunligi: {len(raw_response)}")
 
-    # Temizleme adımları
+    # Matnni tozalaymiz
     clean_text = raw_response.strip()
     clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE)
     clean_text = clean_text.strip()
 
-    # Yalnızca ilk '[' ile son ']' arasındaki geçerli JSON dizisini alıyoruz
+    # json_repair orqali har qanday buzilgan JSON'ni xatosiz qayta tiklab o'qiymiz
+    try:
+        decoded_json = repair_json(clean_text, return_objects=True)
+        if isinstance(decoded_json, list):
+            return decoded_json
+        elif isinstance(decoded_json, dict):
+            # Agar obyekt ichida massiv berilgan bo'lsa
+            for key in decoded_json:
+                if isinstance(decoded_json[key], list):
+                    return decoded_json[key]
+            return [decoded_json]
+    except Exception as parse_err:
+        print(f"[GENERATOR] JSON parse xatosi: {parse_err}")
+
+    # Zaxira usul: [ ... ] oralig'ini qidirish
     start_idx = clean_text.find('[')
     end_idx = clean_text.rfind(']')
-
     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
         json_str = clean_text[start_idx:end_idx + 1]
-        return json.loads(json_str)
+        return json.loads(repair_json(json_str))
 
-    return json.loads(clean_text)
+    return json.loads(repair_json(clean_text))
 
 def _fetch_image_sync(keyword: str):
-    """Görsel çekme işlevi"""
+    """Mavzuga mos rasmlarni Unsplash xizmatidan yuklab olish"""
     try:
         encoded_keyword = urllib.parse.quote(keyword)
         url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
@@ -135,7 +147,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1. Slayt: Başlık
+        # 1-Slayd: Titul
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
@@ -149,7 +161,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.alignment = PP_ALIGN.CENTER
             continue
 
-        # Diğer slayt başlıkları
+        # Slayd sarlavhasi
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -159,20 +171,21 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # İçerik
+        # Asosiy matn
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(7.0), Inches(5.0))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
 
         points = slide_info.get("content", [])
-        for idx, point in enumerate(points):
-            p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
-            p.text = f"• {point}"
-            p.font.size = Pt(22)
-            p.font.color.rgb = TEXT_COLOR
-            p.space_after = Pt(14)
+        if isinstance(points, list):
+            for idx, point in enumerate(points):
+                p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
+                p.text = f"• {point}"
+                p.font.size = Pt(22)
+                p.font.color.rgb = TEXT_COLOR
+                p.space_after = Pt(14)
 
-        # Görsel
+        # Rasm
         keyword = slide_info.get("image_keyword", "topic")
         img_stream = _fetch_image_sync(keyword)
         if img_stream:
