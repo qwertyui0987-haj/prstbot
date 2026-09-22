@@ -19,7 +19,7 @@ else:
     print("CRITICAL ERROR: GEMINI_API_KEY muhit o'zgaruvchisi olinmadi!")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Ishlaydigan Gemini modelini avtomatik sinab ko'rish"""
+    """Modelleri sırayla deneyerek JSON formatında yanıt alma"""
     candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
@@ -32,39 +32,35 @@ def _get_gemini_response_sync(prompt: str) -> str:
 
     for model_name in candidate_models:
         try:
-            print(f"[GENERATOR] Model sinab ko'rilmoqda: {model_name}")
-            model = genai.GenerativeModel(model_name)
+            print(f"[GENERATOR] Model deneniyor: {model_name}")
+            # JSON yanıt tipini zorunlu kılıyoruz
+            model = genai.GenerativeModel(
+                model_name,
+                generation_config={"response_mime_type": "application/json"}
+            )
             response = model.generate_content(prompt)
             if response and response.text:
-                print(f"[GENERATOR] Muvaffaqiyatli ishlatilgan model: {model_name}")
+                print(f"[GENERATOR] Başarıyla kullanılan model: {model_name}")
                 return response.text
         except Exception as err:
-            print(f"[GENERATOR] {model_name} xatosi: {err}")
+            # Standart yapılandırma ile tekrar dene
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                if response and response.text:
+                    return response.text
+            except Exception:
+                pass
+            print(f"[GENERATOR] {model_name} hatası: {err}")
             last_exception = err
-
-    # Agar ro'yxatdagilar ishlamasa, akkauntdagi mavjud modellardan izlaymiz
-    try:
-        print("[GENERATOR] Akkauntdagi mavjud modellar ro'yxati olinmoqda...")
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                try:
-                    print(f"[GENERATOR] ListModels orqali sinov: {m.name}")
-                    model = genai.GenerativeModel(m.name)
-                    response = model.generate_content(prompt)
-                    if response and response.text:
-                        return response.text
-                except Exception:
-                    continue
-    except Exception as list_err:
-        print(f"[GENERATOR] ListModels xatosi: {list_err}")
 
     if last_exception:
         raise last_exception
-    raise Exception("Birorta ham ishlaydigan Gemini modeli topilmadi.")
+    raise Exception("Çalışan bir Gemini modeli bulunamadı.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     print(f"\n==========================================")
-    print(f"[GENERATOR] Funksiya chaqirildi! Mavzu: '{topic}'")
+    print(f"[GENERATOR] Çağrı alındı! Konu: '{topic}'")
     print(f"==========================================\n")
 
     if user_script:
@@ -73,7 +69,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Berilgan ssenariy bo'yicha 6 ta slayd tayyorla. 
-        Javobingiz FAQAT va FAQAT JSON formatida bo'lsin. Hech qanday ```json yoki markdown ishlatmang:
+        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -87,7 +83,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Ushbu mavzu bo'yicha 6 ta professional slayd tayyorla.
-        Javobingiz FAQAT va FAQAT JSON formatida bo'lsin. Hech qanday ```json yoki markdown ishlatmang:
+        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -98,26 +94,29 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         """
 
     raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-    print(f"[GENERATOR] Gemini javob berdi! Uzunligi: {len(raw_response)}")
+    print(f"[GENERATOR] Yanıt alındı. Uzunluk: {len(raw_response)}")
 
-    # Matnni Markdown teglardan (```json va ```) tozalaymiz
+    # Temizleme adımları
     clean_text = raw_response.strip()
     clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE)
     clean_text = clean_text.strip()
 
-    # Aniq JSON massivini [ ... ] ajratib olamiz
-    json_match = re.search(r'\[.*\]', clean_text, re.DOTALL)
-    if json_match:
-        return json.loads(json_match.group(0))
+    # Yalnızca ilk '[' ile son ']' arasındaki geçerli JSON dizisini alıyoruz
+    start_idx = clean_text.find('[')
+    end_idx = clean_text.rfind(']')
+
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        json_str = clean_text[start_idx:end_idx + 1]
+        return json.loads(json_str)
 
     return json.loads(clean_text)
 
 def _fetch_image_sync(keyword: str):
-    """Mavzuga mos rasmlarni Unsplash xizmatidan yuklab olish"""
+    """Görsel çekme işlevi"""
     try:
         encoded_keyword = urllib.parse.quote(keyword)
-        url = f"[https://source.unsplash.com/800x600/](https://source.unsplash.com/800x600/)?{encoded_keyword}"
+        url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=4) as resp:
             return io.BytesIO(resp.read())
@@ -136,7 +135,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Titul (Ortiqcha yozuvlarsiz)
+        # 1. Slayt: Başlık
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
@@ -150,7 +149,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.alignment = PP_ALIGN.CENTER
             continue
 
-        # Slayd sarlavhasi
+        # Diğer slayt başlıkları
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -160,7 +159,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Asosiy matn
+        # İçerik
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(7.0), Inches(5.0))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
@@ -173,7 +172,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.font.color.rgb = TEXT_COLOR
             p.space_after = Pt(14)
 
-        # Rasm
+        # Görsel
         keyword = slide_info.get("image_keyword", "topic")
         img_stream = _fetch_image_sync(keyword)
         if img_stream:
