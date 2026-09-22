@@ -3,6 +3,7 @@ import os
 import io
 import re
 import asyncio
+import time
 import urllib.request
 import urllib.parse
 from google import genai
@@ -15,34 +16,45 @@ from pptx.enum.text import PP_ALIGN
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Yangi va amaldagi Gemini modellariga so'rov yuborish"""
+    """Modellarga so'rov yuborish va 503 xatosida qayta urinish"""
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY olinmadi! Railway Variables bo'limini tekshiring.")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # Hozirda faol bo'lgan rasmiy modellar
+    # Rasmiy va barqaror ishlaydigan modellar
     candidate_models = [
-        "gemini-3.6-flash",
-        "gemini-2.5-flash-latest"
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash"
     ]
 
     for model_name in candidate_models:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
+        # 503 server bandlik xatosida 3 martagacha qayta urinib ko'radi
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
                 )
-            )
-            if response and response.text:
-                return response.text
-        except Exception as err:
-            print(f"[GENERATOR LOG] {model_name} modeli xatosi: {err}")
-            continue
+                if response and response.text:
+                    return response.text
+            except Exception as err:
+                err_str = str(err)
+                print(f"[GENERATOR LOG] {model_name} (Urinish {attempt+1}) xatosi: {err_str}")
+                
+                # Agar server band bo'lsa (503), 2 soniya kutib qayta urinib ko'radi
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    time.sleep(2)
+                    continue
+                else:
+                    # Boshqa xatolik bo'lsa, keyingi modelga o'tadi
+                    break
 
-    raise Exception("Birorta ham Gemini modeli javob bermadi.")
+    raise Exception("Barcha Gemini modellari band yoki javob bermadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
