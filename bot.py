@@ -45,7 +45,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
 async def process_standard_plan(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PresentationState.waiting_for_script)
     await callback.message.answer(
-        "Siz **15 000 so'mlik** tarifni tanladingiz.\n\n"
+        "Siz 15 000 so'mlik tarifni tanladingiz.\n\n"
         "Iltimos, prezentatsiya mavzusini va qisqacha ssenariyingizni yuboring:"
     )
     await callback.answer()
@@ -54,8 +54,8 @@ async def process_standard_plan(callback: types.CallbackQuery, state: FSMContext
 async def process_premium_plan(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PresentationState.waiting_for_topic)
     await callback.message.answer(
-        "Siz **20 000 so'mlik** tarifni tanladingiz.\n\n"
-        "Iltimos, faqat prezentatsiya mavzusini yuboring (Masalan: *Sun'iy intellektning kelajagi*):"
+        "Siz 20 000 so'mlik tarifni tanladingiz.\n\n"
+        "Iltimos, faqat prezentatsiya mavzusini yuboring (Masalan: Sun'iy intellektning kelajagi):"
     )
     await callback.answer()
 
@@ -75,7 +75,7 @@ async def handle_standard(message: types.Message, state: FSMContext):
             os.remove(file_path)
     except Exception as e:
         logging.exception(f"XATOLIK YUZ BERDI: {e}")
-        await message.answer(f"❌ Prezentatsiya yaratishda xatolik yuz berdi:\n`{e}`", parse_mode="Markdown")
+        await message.answer(f"❌ Prezentatsiya yaratishda xatolik yuz berdi:\n{e}")
     finally:
         try:
             await msg.delete()
@@ -98,7 +98,7 @@ async def handle_premium(message: types.Message, state: FSMContext):
             os.remove(file_path)
     except Exception as e:
         logging.exception(f"XATOLIK YUZ BERDI: {e}")
-        await message.answer(f"❌ Prezentatsiya yaratishda xatolik yuz berdi:\n`{e}`", parse_mode="Markdown")
+        await message.answer(f"❌ Prezentatsiya yaratishda xatolik yuz berdi:\n{e}")
     finally:
         try:
             await msg.delete()
