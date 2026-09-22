@@ -14,7 +14,6 @@ from generator import generate_presentation_content, create_pptx_file
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# Render avtomatik ravishda PORT muhit o'zgaruvchisini beradi (aks holda 8080 ishlatiladi)
 PORT = int(os.getenv("PORT", 8080))
 
 logging.basicConfig(level=logging.INFO)
@@ -62,36 +61,44 @@ async def process_premium_plan(callback: types.CallbackQuery, state: FSMContext)
 
 @dp.message(PresentationState.waiting_for_script)
 async def handle_standard(message: types.Message, state: FSMContext):
-    msg = await message.answer("⏳ Gemini AI ssenariyingizni qayta ishlamoqda va prezentatsiya tayyorlamoqda...")
-    topic = message.text[:50]
-    slides_data = await generate_presentation_content(topic=topic, user_script=message.text)
-    
-    file_path = f"pres_{message.from_user.id}.pptx"
-    create_pptx_file(slides_data, file_path)
-    
-    doc = FSInputFile(file_path)
-    await message.answer_document(doc, caption="✅ Prezentatsiyangiz tayyor!")
-    
-    await msg.delete()
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    await state.clear()
+    msg = await message.answer("⏳ Gemini AI ssenariyingizni qayta ishlamoqda...")
+    try:
+        topic = message.text[:50]
+        slides_data = await generate_presentation_content(topic=topic, user_script=message.text)
+        
+        file_path = f"pres_{message.from_user.id}.pptx"
+        await create_pptx_file(slides_data, file_path)
+        
+        doc = FSInputFile(file_path)
+        await message.answer_document(doc, caption="✅ Prezentatsiyangiz tayyor!")
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        logging.error(f"Xatolik: {e}")
+        await message.answer("❌ Prezentatsiya yaratishda xatolik yuz berdi. Qayta urinib ko'ring.")
+    finally:
+        await msg.delete()
+        await state.clear()
 
 @dp.message(PresentationState.waiting_for_topic)
 async def handle_premium(message: types.Message, state: FSMContext):
-    msg = await message.answer("⏳ Gemini AI mavzu bo'yicha slaydlar matnini o'zi tuzmoqda va PPTX tayyorlamoqda...")
-    slides_data = await generate_presentation_content(topic=message.text)
-    
-    file_path = f"pres_{message.from_user.id}.pptx"
-    create_pptx_file(slides_data, file_path)
-    
-    doc = FSInputFile(file_path)
-    await message.answer_document(doc, caption="✅ AI tomonidan yaratilgan prezentatsiyangiz tayyor!")
-    
-    await msg.delete()
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    await state.clear()
+    msg = await message.answer("⏳ Gemini AI mavzu bo'yicha slaydlar matnini tuzmoqda...")
+    try:
+        slides_data = await generate_presentation_content(topic=message.text)
+        
+        file_path = f"pres_{message.from_user.id}.pptx"
+        await create_pptx_file(slides_data, file_path)
+        
+        doc = FSInputFile(file_path)
+        await message.answer_document(doc, caption="✅ AI tomonidan yaratilgan prezentatsiyangiz tayyor!")
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        logging.error(f"Xatolik: {e}")
+        await message.answer("❌ Prezentatsiya yaratishda xatolik yuz berdi. Qayta urinib ko'ring.")
+    finally:
+        await msg.delete()
+        await state.clear()
 
 # --- Render WebService uchun soxta (Dummy) HTTP Server ---
 async def handle_ping(request):
@@ -107,7 +114,6 @@ async def start_web_server():
     logging.info(f"Web server started on port {PORT}")
 
 async def main():
-    # Web server va Telegram Bot Polling-ni parallel ravishda ishga tushiramiz
     await start_web_server()
     await dp.start_polling(bot)
 
