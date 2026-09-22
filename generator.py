@@ -14,17 +14,17 @@ from pptx.enum.text import PP_ALIGN
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 def _get_groq_response_sync(prompt: str) -> str:
-    """Groq API orqali Llama modeliga so'rov yuborish"""
+    """Groq API orqali amaldagi faol modellarga so'rov yuborish"""
     if not GROQ_API_KEY:
         raise Exception("GROQ_API_KEY topilmadi! Railway Variables bo'limiga GROQ_API_KEY ni qo'shing.")
 
     client = Groq(api_key=GROQ_API_KEY)
 
-    # Groq'da mavjud va amaldagi rasmiy modellar
+    # Groq platformasida hozirda faol bo'lgan rasmiy modellar
     candidate_models = [
-        "llama-3.1-80b-instant",
-        "llama3-70b-8192",
-        "llama3-8b-8192"
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768"
     ]
 
     for model_name in candidate_models:
@@ -190,5 +190,4 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
     return output_filename
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
-    # Nuqta bilan to'g'rilangan sintaksis (asyncio.to_thread)
     return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
