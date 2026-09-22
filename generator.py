@@ -13,23 +13,38 @@ from pptx.enum.text import PP_ALIGN
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+def _get_active_gemini_models():
+    """Google'dan hozirgi faol modellar ro'yxatini dinamik ravishda olish"""
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Faqat generateContent va flash/pro modellarni ajratib olish
+            valid_models = []
+            for m in data.get("models", []):
+                name = m.get("name", "").replace("models/", "")
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods and "flash" in name:
+                    valid_models.append(name)
+            if valid_models:
+                return valid_models
+    except Exception as e:
+        print(f"[GENERATOR LOG] Modellarni olishda xato: {e}")
+    
+    # Zaxira ro'yxat (Agressiv zaxira)
+    return ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Google Gemini REST API orqali to'g'ridan-to'g'ri so'rov yuborish"""
+    """Gemini API orqali so'rov yuborish"""
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
-    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
-    
+    models = _get_active_gemini_models()
     headers = {"Content-Type": "application/json"}
     payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
-        ],
-        "generationConfig": {
-            "responseMimeType": "application/json"
-        }
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json"}
     }
 
     for model in models:
@@ -46,7 +61,7 @@ def _get_gemini_response_sync(prompt: str) -> str:
             print(f"[GENERATOR LOG] Gemini {model} ulanish xatosi: {err}")
             continue
 
-    raise Exception("Gemini API bilan bog'lanib bo'lmadi.")
+    raise Exception("Barcha Gemini modellarida xatolik yuz berdi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
