@@ -15,16 +15,16 @@ from pptx.enum.text import PP_ALIGN
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Запрос через новый официальный SDK google-genai"""
+    """Yangi va amaldagi Gemini modellariga so'rov yuborish"""
     if not GEMINI_API_KEY:
-        raise Exception("GEMINI_API_KEY не найден в переменных окружения!")
+        raise Exception("GEMINI_API_KEY olinmadi! Railway Variables bo'limini tekshiring.")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # Актуальные рабочие модели
+    # Hozirda faol bo'lgan rasmiy modellar
     candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash"
+        "gemini-3.6-flash",
+        "gemini-2.5-flash-latest"
     ]
 
     for model_name in candidate_models:
@@ -39,10 +39,10 @@ def _get_gemini_response_sync(prompt: str) -> str:
             if response and response.text:
                 return response.text
         except Exception as err:
-            print(f"[GENERATOR LOG] Ошибка модели {model_name}: {err}")
+            print(f"[GENERATOR LOG] {model_name} modeli xatosi: {err}")
             continue
 
-    raise Exception("Ни одна из моделей Gemini не ответила.")
+    raise Exception("Birorta ham Gemini modeli javob bermadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     if user_script:
@@ -78,10 +78,10 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     try:
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
     except Exception as e:
-        print(f"[GENERATOR ERROR] Ошибка API: {e}")
+        print(f"[GENERATOR ERROR] API Xatosi: {e}")
         raw_response = ""
 
-    # Парсинг JSON
+    # JSON matnini tozalash
     clean_text = raw_response.strip()
     clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE).strip()
@@ -103,7 +103,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     except Exception:
         pass
 
-    # Резервный вариант на случай сбоя API
+    # Kutilmagan uzilish holati uchun zaxira slaydlar
     return [
         {
             "title": topic,
