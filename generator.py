@@ -5,7 +5,6 @@ import re
 import asyncio
 import urllib.request
 import urllib.parse
-from json_repair import repair_json
 import google.generativeai as genai
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -20,7 +19,7 @@ else:
     print("CRITICAL ERROR: GEMINI_API_KEY muhit o'zgaruvchisi olinmadi!")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Ishlaydigan Gemini modelini avtomatik sinab ko'rish"""
+    """Gemini modelidan matn olish"""
     candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
@@ -40,7 +39,7 @@ def _get_gemini_response_sync(prompt: str) -> str:
             )
             response = model.generate_content(prompt)
             if response and response.text:
-                print(f"[GENERATOR] Muvaffaqiyatli ishlatilgan model: {model_name}")
+                print(f"[GENERATOR] Muvaffaqiyatli model: {model_name}")
                 return response.text
         except Exception as err:
             try:
@@ -68,7 +67,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Berilgan ssenariy bo'yicha 6 ta slayd tayyorla. 
-        Javobingiz FAQAT toza JSON formatidagi massiv bo'lsin. Hech qanday qo'shimcha matn yozmang:
+        Javobingiz FAQAT JSON formatidagi massiv bo'lsin:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -82,7 +81,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Ushbu mavzu bo'yicha 6 ta professional slayd tayyorla.
-        Javobingiz FAQAT toza JSON formatidagi massiv bo'lsin. Hech qanday qo'shimcha matn yozmang:
+        Javobingiz FAQAT JSON formatidagi massiv bo'lsin:
         [
           {{
             "title": "Slayd sarlavhasi",
@@ -95,37 +94,35 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
     print(f"[GENERATOR] Gemini javob berdi! Uzunligi: {len(raw_response)}")
 
-    # Matnni tozalaymiz
+    # REGEX ORQALI HAR BIR SLAYD OBYEKTINI ALOHIDA SUZIB OLAMIZ (Extra Data xatosini 100% yo'qotadi)
+    dict_matches = re.findall(r'\{[^{}]*"title"[^{}]*\}', raw_response, re.DOTALL)
+    
+    slides_list = []
+    if dict_matches:
+        for match in dict_matches:
+            try:
+                slide_obj = json.loads(match)
+                slides_list.append(slide_obj)
+            except Exception:
+                continue
+
+    if slides_list:
+        return slides_list
+
+    # Agar regex topa olmasa, standart usul bilan tozalab ko'ramiz
     clean_text = raw_response.strip()
     clean_text = re.sub(r'^```(?:json)?\s*', '', clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r'\s*```$', '', clean_text, flags=re.IGNORECASE)
-    clean_text = clean_text.strip()
-
-    # json_repair orqali har qanday buzilgan JSON'ni xatosiz qayta tiklab o'qiymiz
-    try:
-        decoded_json = repair_json(clean_text, return_objects=True)
-        if isinstance(decoded_json, list):
-            return decoded_json
-        elif isinstance(decoded_json, dict):
-            # Agar obyekt ichida massiv berilgan bo'lsa
-            for key in decoded_json:
-                if isinstance(decoded_json[key], list):
-                    return decoded_json[key]
-            return [decoded_json]
-    except Exception as parse_err:
-        print(f"[GENERATOR] JSON parse xatosi: {parse_err}")
-
-    # Zaxira usul: [ ... ] oralig'ini qidirish
+    
     start_idx = clean_text.find('[')
     end_idx = clean_text.rfind(']')
-    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-        json_str = clean_text[start_idx:end_idx + 1]
-        return json.loads(repair_json(json_str))
+    if start_idx != -1 and end_idx != -1:
+        return json.loads(clean_text[start_idx:end_idx + 1])
 
-    return json.loads(repair_json(clean_text))
+    return json.loads(clean_text)
 
 def _fetch_image_sync(keyword: str):
-    """Mavzuga mos rasmlarni Unsplash xizmatidan yuklab olish"""
+    """Unsplash'dan rasm yuklab olish"""
     try:
         encoded_keyword = urllib.parse.quote(keyword)
         url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
@@ -184,6 +181,11 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
                 p.font.size = Pt(22)
                 p.font.color.rgb = TEXT_COLOR
                 p.space_after = Pt(14)
+        elif isinstance(points, str):
+            p = tf_content.paragraphs[0]
+            p.text = f"• {points}"
+            p.font.size = Pt(22)
+            p.font.color.rgb = TEXT_COLOR
 
         # Rasm
         keyword = slide_info.get("image_keyword", "topic")
