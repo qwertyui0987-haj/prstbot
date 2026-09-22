@@ -19,46 +19,94 @@ else:
     print("CRITICAL ERROR: GEMINI_API_KEY muhit o'zgaruvchisi olinmadi!")
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(prompt)
-    return response.text
+    """Modellarni birma-bir sinab ko'rish va ishlaydiganini topish"""
+    # Tekshiriladigan modellar ro'yxati (eng yangisidan boshlab)
+    candidate_models = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro",
+        "gemini-pro"
+    ]
+
+    last_exception = None
+
+    # 1. Ro'yxatdagi modellar bilan urinib ko'ramiz
+    for model_name in candidate_models:
+        try:
+            print(f"[GENERATOR] Model sinab ko'rilmoqda: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            if response and response.text:
+                print(f"[GENERATOR] Muvaffaqiyatli ishlatilgan model: {model_name}")
+                return response.text
+        except Exception as err:
+            print(f"[GENERATOR] {model_name} xatosi: {err}")
+            last_exception = err
+
+    # 2. Agar ro'yxatdagilar ishlamasa, akkauntdagi mavjud modellar ro'yxatidan izlaymiz
+    try:
+        print("[GENERATOR] Akkauntdagi mavjud modellar ro'yxati olinmoqda...")
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                try:
+                    print(f"[GENERATOR] ListModels orqali sinov: {m.name}")
+                    model = genai.GenerativeModel(m.name)
+                    response = model.generate_content(prompt)
+                    if response and response.text:
+                        return response.text
+                except Exception:
+                    continue
+    except Exception as list_err:
+        print(f"[GENERATOR] ListModels xatosi: {list_err}")
+
+    # Agar birontasi ham ishlamasa xatoni otamiz
+    if last_exception:
+        raise last_exception
+    raise Exception("Birorta ham ishlaydigan Gemini modeli topilmadi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
     print(f"\n==========================================")
     print(f"[GENERATOR] Funksiya chaqirildi! Mavzu: '{topic}'")
-    print(f"[GENERATOR] API Key mavjudmi: {bool(GEMINI_API_KEY)}")
     print(f"==========================================\n")
 
-    prompt = f"""
-    Mavzu: {topic}
-    Ushbu mavzu bo'yicha 5-6 ta professional slayd tayyorla.
-    Javobingiz FAQAT va FAQAT JSON ro'yxat bo'lsin:
-    [
-      {{
-        "title": "Slayd sarlavhasi",
-        "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-        "image_keyword": "nature"
-      }}
-    ]
-    """
+    if user_script:
+        prompt = f"""
+        Mavzu: {topic}
+        Ssenariy: {user_script}
 
-    try:
-        raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-        print(f"[GENERATOR] Gemini javob berdi! Javob uzunligi: {len(raw_response)}")
-        
-        json_match = re.search(r'\[.*\]', raw_response, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
-        return json.loads(raw_response.strip())
+        Berilgan ssenariy bo'yicha 6 ta slayd tayyorla. 
+        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
+        [
+          {{
+            "title": "Slayd sarlavhasi",
+            "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+            "image_keyword": "nature"
+          }}
+        ]
+        """
+    else:
+        prompt = f"""
+        Mavzu: {topic}
 
-    except Exception as e:
-        # Zaxiraga o'tmasdan XATONI TO'G'RIDAN-TO'G'RI KONSOLGA CHIQARAMIZ!
-        print(f"\n[XATOLIK] GEMINI API CHINDAN ISHLAMADI:")
-        print(f"Xato turi: {type(e).__name__}")
-        print(f"Xato matni: {e}\n")
-        
-        # Agarda xatolik bo'lsa, zaxira emas, xatoni ma'lum qilamiz
-        raise e
+        Ushbu mavzu bo'yicha 6 ta professional va batafsil slayd tayyorla.
+        Javobingiz FAQAT va FAQAT toza JSON formatida bo'lsin:
+        [
+          {{
+            "title": "Slayd sarlavhasi",
+            "content": ["Mavzuga oid batafsil fikr 1", "Mavzuga oid batafsil fikr 2", "Mavzuga oid batafsil fikr 3"],
+            "image_keyword": "technology"
+          }}
+        ]
+        """
+
+    raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
+    print(f"[GENERATOR] Gemini javob berdi! Javob uzunligi: {len(raw_response)}")
+
+    json_match = re.search(r'\[.*\]', raw_response, re.DOTALL)
+    if json_match:
+        return json.loads(json_match.group(0))
+    return json.loads(raw_response.strip())
 
 def _fetch_image_sync(keyword: str):
     try:
@@ -82,10 +130,12 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
+        # 1-Slayd: Titul
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
             tf.word_wrap = True
+            
             p = tf.paragraphs[0]
             p.text = slide_info.get("title", "Prezentatsiya")
             p.font.size = Pt(48)
@@ -94,15 +144,17 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.alignment = PP_ALIGN.CENTER
             continue
 
+        # Slayd sarlavhasi
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
         p_title = tf_title.paragraphs[0]
-        p_title.text = slide_info.get("title", "")
+        p_title.text = slide_info.get("title", f"{i+1}-Slayd")
         p_title.font.size = Pt(32)
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
+        # Asosiy matn
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(7.0), Inches(5.0))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
@@ -115,6 +167,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.font.color.rgb = TEXT_COLOR
             p.space_after = Pt(14)
 
+        # Rasm
         keyword = slide_info.get("image_keyword", "topic")
         img_stream = _fetch_image_sync(keyword)
         if img_stream:
@@ -127,4 +180,4 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
     return output_filename
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
-    return await asyncio-to_thread(_build_pptx_sync, slides_data, output_filename)
+    return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
