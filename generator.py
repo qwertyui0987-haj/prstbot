@@ -321,6 +321,3 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
     return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
-```
-
-Endi ushbu kodni saqlab qayta sinab ko'rsangiz, AI to'liqlicha o'z kuchida ishlab, a'lo darajadagi noyob slaydlarni generate qiladi!
