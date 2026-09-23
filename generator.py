@@ -17,7 +17,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 def _get_active_gemini_models():
     """Google'dan hozirgi faol modellar ro'yxatini dinamik ravishda olish"""
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models?key=](https://generativelanguage.googleapis.com/v1beta/models?key=){GEMINI_API_KEY}"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
@@ -47,7 +47,7 @@ def _get_gemini_response_sync(prompt: str) -> str:
     }
 
     for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent?key={GEMINI_API_KEY}"
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=15)
             if response.status_code == 200:
@@ -120,10 +120,8 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
     try:
         clean_text = raw_response.strip()
-        clean_text = re.sub(r"^
-```(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r"\s*
-```$", "", clean_text, flags=re.IGNORECASE).strip()
+        clean_text = re.sub(r"^\x60{3}(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\s*\x60{3}$", "", clean_text, flags=re.IGNORECASE).strip()
 
         data = json.loads(clean_text)
         if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
@@ -150,7 +148,7 @@ def _fetch_from_wikimedia(keyword: str):
     try:
         encoded_keyword = urllib.parse.quote(keyword)
         url = (
-            f"https://commons.wikimedia.org/w/api.php?"
+            f"[https://commons.wikimedia.org/w/api.php](https://commons.wikimedia.org/w/api.php)?"
             f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=5"
             f"&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&format=json"
         )
@@ -177,7 +175,7 @@ def _fetch_from_pollinations(keyword: str, slide_index: int):
     """Pollinations AI orqali mavzuga mos sun'iy intellekt rasmini olish"""
     try:
         encoded_keyword = urllib.parse.quote(f"photo of {keyword}")
-        url = f"https://image.pollinations.ai/prompt/{encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index + 10}"
+        url = f"[https://image.pollinations.ai/prompt/](https://image.pollinations.ai/prompt/){encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index + 10}"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
@@ -205,7 +203,7 @@ def _fetch_image_sync(keyword: str, slide_index: int):
     if img_stream:
         return img_stream
 
-    # 429 xatosi va IP bloklanishini oldini olish uchun 1 soniya kutiladi
+    # Rate-limit (429 xatosi) oldini olish uchun 1 soniya kutiladi
     time.sleep(1)
 
     # 2-Manba: Pollinations AI
