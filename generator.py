@@ -68,14 +68,14 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
-        Har bir slayd uchun mos, inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
+        Har bir slayd uchun alohida, mavzuga mos va BIR-BIRIGA O'XSHAMAYDIGAN inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "business strategy"
+              "image_keyword": "technology"
             }}
           ]
         }}
@@ -85,14 +85,14 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
-        Har bir slayd uchun mos, inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
+        Har bir slayd uchun alohida, mavzuga mos va BIR-BIRIGA O'XSHAMAYDIGAN inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "technology innovation"
+              "image_keyword": "business"
             }}
           ]
         }}
@@ -129,30 +129,29 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         }
     ]
 
-def _fetch_image_sync(keyword: str):
-    """Mavzuga mos yuqori sifatli rasmni Unsplash/Picsum manbalaridan yuklab olish"""
+def _fetch_image_sync(keyword: str, slide_index: int):
+    """Mavzuga va slayd indeksiga mos har xil rasmlarni yuklab olish"""
     if not keyword:
         keyword = "business"
         
     encoded_keyword = urllib.parse.quote(keyword)
-    urls = [
-        f"https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop", # Zaxira sifatli rasm
-        f"https://picsum.photos/800/600" # Zaxira rasm
-    ]
     
-    # Unsplash manbasidan qidiruv bo'yicha to'g'ri rasm manbai
-    primary_url = f"https://source.unsplash.com/featured/800x600/?{encoded_keyword}"
-    urls.insert(0, primary_url)
+    # Har bir slayd uchun noyob (har xil) rasm beruvchi ishonchli manbalar
+    urls = [
+        f"https://picsum.photos/seed/{encoded_keyword}_{slide_index}/800/600",
+        f"https://image.pollinations.ai/prompt/{encoded_keyword}%20high%20quality?width=800&height=600&nologo=true",
+        f"https://loremflickr.com/800/600/{encoded_keyword}"
+    ]
 
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
     for url in urls:
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=6) as resp:
                 if resp.status == 200:
                     image_bytes = resp.read()
-                    if len(image_bytes) > 1000:  # Rasm haqiqatan ham yuklanganligini tekshirish
+                    if len(image_bytes) > 2000:
                         return io.BytesIO(image_bytes)
         except Exception as e:
             print(f"[IMAGE LOG] URL bo'yicha rasm yuklashda xato ({url}): {e}")
@@ -172,7 +171,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Muqova (Title Slide)
+        # 1-Slayd: Muqova
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
@@ -185,7 +184,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.alignment = PP_ALIGN.CENTER
             continue
 
-        # Asosiy slaydlar sarlavhasi
+        # Sarlavha
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -195,12 +194,10 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Rasm yuklab olishga urinish
+        # Har bir slaydga mos har xil rasm olish
         keyword = slide_info.get("image_keyword", "business")
-        img_stream = _fetch_image_sync(keyword)
+        img_stream = _fetch_image_sync(keyword, i)
 
-        # Agar rasm bo'lsa: Matn chapda (6.8 dlyum), Rasm o'ngda (4.8 dlyum)
-        # Agar rasm yuklanmasa: Matn butun slayd bo'ylab kengaytiriladi (11.7 dlyum)
         if img_stream:
             content_width = Inches(6.8)
         else:
@@ -224,7 +221,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.font.size = Pt(20)
             p.font.color.rgb = TEXT_COLOR
 
-        # Rasmni o'ng tomonga chiroyli joylashtirish
+        # Rasmni joylashtirish
         if img_stream:
             try:
                 slide.shapes.add_picture(
