@@ -2,7 +2,6 @@ import json
 import os
 import io
 import re
-import time
 import asyncio
 import urllib.request
 import urllib.parse
@@ -14,24 +13,42 @@ from pptx.enum.text import PP_ALIGN
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+def _get_active_gemini_models():
+    """Google'dan hozirgi faol modellar ro'yxatini dinamik ravishda olish"""
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            valid_models = []
+            for m in data.get("models", []):
+                name = m.get("name", "").replace("models/", "")
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods and "flash" in name:
+                    valid_models.append(name)
+            if valid_models:
+                return valid_models
+    except Exception as e:
+        print(f"[GENERATOR LOG] Modellarni olishda xato: {e}")
+    
+    return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Gemini API orqali so'rov yuborish (Sodda va xavfsiz URL)"""
+    """Gemini API orqali so'rov yuborish"""
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
-    models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    models = _get_active_gemini_models()
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json"}
     }
 
-    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-
     for model in models:
-        endpoint = f"{base_url}/{model}:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
         try:
-            response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
+            response = requests.post(url, json=payload, headers=headers, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 text = data['candidates'][0]['content']['parts'][0]['text']
@@ -52,12 +69,12 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
         
-        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat kalit so'z yoz (image_keyword).
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1 ta so'z yoz (image_keyword).
         Misollar:
-        - Suv va kran -> "water tap"
-        - Quyosh energiyasi -> "solar panel"
-        - Moliya va pul -> "finance money"
-        - Kompyuter va dasturlash -> "computer programming"
+        - Slayd kran yoki suv haqida bo'lsa -> "water"
+        - Slayd quyosh haqida bo me -> "sun"
+        - Slayd pul haqida bo'lsa -> "money"
+        - Slayd kompyuter haqida bo'lsa -> "computer"
         
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -65,7 +82,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "water tap"
+              "image_keyword": "water"
             }}
           ]
         }}
@@ -76,11 +93,11 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
         
-        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat kalit so'z yoz (image_keyword).
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1 ta so'z yoz (image_keyword).
         Misollar:
-        - Suv va kran -> "water tap"
-        - Quyosh energiyasi -> "solar panel"
-        - Moliya va pul -> "finance money"
+        - Slayd kran yoki suv haqida bo'lsa -> "water"
+        - Slayd quyosh haqida bo'lsa -> "sun"
+        - Slayd pul haqida bo'lsa -> "money"
 
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -88,7 +105,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "solar panel"
+              "image_keyword": "sun"
             }}
           ]
         }}
@@ -102,8 +119,8 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
     try:
         clean_text = raw_response.strip()
-        clean_text = re.sub(r"^\x60{3}(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r"\s*\x60{3}$", "", clean_text, flags=re.IGNORECASE).strip()
+        clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\s*```$", "", clean_text, flags=re.IGNORECASE).strip()
 
         data = json.loads(clean_text)
         if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
@@ -125,72 +142,37 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         }
     ]
 
-def _fetch_from_wikimedia(keyword: str):
-    """Wikimedia Commons orqali mavzuga o'ta mos fotolarni bepul va aniq yuklash"""
-    try:
-        encoded_keyword = urllib.parse.quote(keyword)
-        url = (
-            f"https://commons.wikimedia.org/w/api.php?"
-            f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=5"
-            f"&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&format=json"
-        )
-        headers = {'User-Agent': 'TelegramSlideBot/1.0 (contact@telegram.org)'}
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            pages = data.get('query', {}).get('pages', {})
-            for page_id, page in pages.items():
-                imageinfo = page.get('imageinfo', [{}])[0]
-                mime = imageinfo.get('mime', '')
-                img_url = imageinfo.get('url', '')
-                if mime in ['image/jpeg', 'image/png'] and img_url:
-                    img_req = urllib.request.Request(img_url, headers=headers)
-                    with urllib.request.urlopen(img_req, timeout=8) as img_resp:
-                        content = img_resp.read()
-                        if len(content) > 5000:
-                            return io.BytesIO(content)
-    except Exception as e:
-        print(f"[IMAGE LOG] Wikimedia xatosi ({keyword}): {e}")
-    return None
-
-def _fetch_from_pollinations(keyword: str, slide_index: int):
-    """Pollinations AI orqali mavzuga mos sun'iy intellekt rasmini olish"""
-    try:
-        encoded_keyword = urllib.parse.quote(f"photo of {keyword}")
-        url = f"https://image.pollinations.ai/prompt/{encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index + 10}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            if resp.status == 200:
-                content = resp.read()
-                if len(content) > 3000:
-                    return io.BytesIO(content)
-    except Exception as e:
-        print(f"[IMAGE LOG] Pollinations xatosi ({keyword}): {e}")
-    return None
-
 def _fetch_image_sync(keyword: str, slide_index: int):
-    """Slayd kalit so'ziga mos va 100% mavzuga taalluqli fotolarni yuklash"""
+    """Slayd kalit so'ziga mos va 100% ishlaydigan fotolarni yuklash"""
     if not keyword:
         keyword = "technology"
 
-    clean_keyword = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).strip()
+    clean_keyword = re.sub(r'[^a-zA-Z]', '', keyword).lower().strip()
     if not clean_keyword:
         clean_keyword = "business"
 
-    # 1-Manba: Wikimedia Commons
-    img_stream = _fetch_from_wikimedia(clean_keyword)
-    if img_stream:
-        return img_stream
+    encoded_keyword = urllib.parse.quote(clean_keyword)
+    
+    # KAFOLATLI ISHLAYDIGAN MANBALAR (Unsplash o'rniga):
+    urls = [
+        f"https://image.pollinations.ai/prompt/photo%20of%20{encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index}",
+        f"https://loremflickr.com/800/600/{encoded_keyword}?lock={slide_index}",
+        f"https://picsum.photos/seed/{encoded_keyword}_{slide_index}/800/600"
+    ]
 
-    time.sleep(1)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
-    # 2-Manba: Pollinations AI
-    img_stream = _fetch_from_pollinations(clean_keyword, slide_index)
-    if img_stream:
-        return img_stream
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    image_bytes = resp.read()
+                    if len(image_bytes) > 2000:
+                        return io.BytesIO(image_bytes)
+        except Exception as e:
+            print(f"[IMAGE LOG] Rasm yuklashda xatolik ({url}): {e}")
+            continue
 
     return None
 
