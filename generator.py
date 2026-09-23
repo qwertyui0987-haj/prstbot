@@ -72,7 +72,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1 ta so'z yoz (image_keyword).
         Misollar:
         - Slayd kran yoki suv haqida bo'lsa -> "water"
-        - Slayd quyosh haqida bo me -> "sun"
+        - Slayd quyosh haqida bo'lsa -> "sun"
         - Slayd pul haqida bo'lsa -> "money"
         - Slayd kompyuter haqida bo'lsa -> "computer"
         
@@ -143,36 +143,64 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     ]
 
 def _fetch_image_sync(keyword: str, slide_index: int):
-    """Slayd kalit so'ziga mos va 100% ishlaydigan fotolarni yuklash"""
+    """Slayd kalit so'ziga 100% mos va aniq fotolarni bir nechta ishonchli manbalardan olish"""
     if not keyword:
         keyword = "technology"
 
-    clean_keyword = re.sub(r'[^a-zA-Z]', '', keyword).lower().strip()
+    clean_keyword = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).lower().strip()
     if not clean_keyword:
         clean_keyword = "business"
 
     encoded_keyword = urllib.parse.quote(clean_keyword)
-    
-    # KAFOLATLI ISHLAYDIGAN MANBALAR (Unsplash o'rniga):
-    urls = [
-        f"https://image.pollinations.ai/prompt/photo%20of%20{encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index}",
-        f"https://loremflickr.com/800/600/{encoded_keyword}?lock={slide_index}",
-        f"https://picsum.photos/seed/{encoded_keyword}_{slide_index}/800/600"
-    ]
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    # 1. Wikimedia Commons API - haqiqiy va mavzuga aniq mos rasmlar
+    try:
+        wiki_url = (
+            f"https://commons.wikimedia.org/w/api.php?"
+            f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=5"
+            f"&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&format=json"
+        )
+        req = urllib.request.Request(wiki_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            pages = data.get('query', {}).get('pages', {})
+            for page_id, page in pages.items():
+                imageinfo = page.get('imageinfo', [{}])[0]
+                mime = imageinfo.get('mime', '')
+                img_url = imageinfo.get('url', '')
+                if mime in ['image/jpeg', 'image/png'] and img_url:
+                    img_req = urllib.request.Request(img_url, headers=headers)
+                    with urllib.request.urlopen(img_req, timeout=8) as img_resp:
+                        img_bytes = img_resp.read()
+                        if len(img_bytes) > 5000:
+                            return io.BytesIO(img_bytes)
+    except Exception as e:
+        print(f"[IMAGE LOG] Wikimedia xatosi ({clean_keyword}): {e}")
 
-    for url in urls:
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    image_bytes = resp.read()
-                    if len(image_bytes) > 2000:
-                        return io.BytesIO(image_bytes)
-        except Exception as e:
-            print(f"[IMAGE LOG] Rasm yuklashda xatolik ({url}): {e}")
-            continue
+    # 2. Unsplash Direct Search - yuqori sifatli va mavzuga aniq foto
+    try:
+        unsplash_url = f"https://source.unsplash.com/800x600/?{encoded_keyword}"
+        req = urllib.request.Request(unsplash_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status == 200:
+                img_bytes = resp.read()
+                if len(img_bytes) > 3000:
+                    return io.BytesIO(img_bytes)
+    except Exception as e:
+        print(f"[IMAGE LOG] Unsplash xatosi ({clean_keyword}): {e}")
+
+    # 3. Pollinations AI - mavzuga mos aniq sun'iy intellekt surati
+    try:
+        pollin_url = f"https://image.pollinations.ai/prompt/high%20quality%20photo%20of%20{encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index + 42}"
+        req = urllib.request.Request(pollin_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status == 200:
+                img_bytes = resp.read()
+                if len(img_bytes) > 3000:
+                    return io.BytesIO(img_bytes)
+    except Exception as e:
+        print(f"[IMAGE LOG] Pollinations xatosi ({clean_keyword}): {e}")
 
     return None
 
