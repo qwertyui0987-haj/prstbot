@@ -69,14 +69,12 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
         
-        JUDA MUHIM QO'SHIMCHA QO'LLANMA:
-        Har bir slayd uchun shu slayd mazmunini va undagi fikrlarni 100% ifodalaydigan, ingliz tilida FAQT VA FAQAT 1 TA ANIQ OBYEKT SO'ZINI yoz (image_keyword).
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1 ta so'z yoz (image_keyword).
         Misollar:
-        - Slayd kran yoki suv tejash haqida bo'lsa -> "faucet"
-        - Slayd quyosh paneli haqida bo'lsa -> "solar"
-        - Slayd pul, moliya haqida bo'lsa -> "money"
-        - Slayd robot, SI haqida bo'lsa -> "robot"
-        - Slayd tabiat haqida bo'lsa -> "forest"
+        - Slayd kran yoki suv haqida bo'lsa -> "water"
+        - Slayd quyosh haqida bo me -> "sun"
+        - Slayd pul haqida bo'lsa -> "money"
+        - Slayd kompyuter haqida bo'lsa -> "computer"
         
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -84,7 +82,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "faucet"
+              "image_keyword": "water"
             }}
           ]
         }}
@@ -95,14 +93,11 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
         
-        JUDA MUHIM QO'SHIMCHA QO'LLANMA:
-        Har bir slayd uchun shu slayd mazmunini va undagi fikrlarni 100% ifodalaydigan, ingliz tilida FAQT VA FAQAT 1 TA ANIQ OBYEKT SO'ZINI yoz (image_keyword).
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1 ta so'z yoz (image_keyword).
         Misollar:
-        - Slayd kran yoki suv tejash haqida bo'lsa -> "faucet"
-        - Slayd quyosh paneli haqida bo'lsa -> "solar"
-        - Slayd pul, moliya haqida bo'lsa -> "money"
-        - Slayd robot, SI haqida bo'lsa -> "robot"
-        - Slayd tabiat haqida bo'lsa -> "forest"
+        - Slayd kran yoki suv haqida bo'lsa -> "water"
+        - Slayd quyosh haqida bo'lsa -> "sun"
+        - Slayd pul haqida bo'lsa -> "money"
 
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -110,7 +105,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "solar"
+              "image_keyword": "sun"
             }}
           ]
         }}
@@ -148,7 +143,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     ]
 
 def _fetch_image_sync(keyword: str, slide_index: int):
-    """Slayd kalit so'ziga 100% mos haqiqiy professional fotolarni yuklash"""
+    """Slayd kalit so'ziga mos va 100% ishlaydigan fotolarni yuklash"""
     if not keyword:
         keyword = "technology"
 
@@ -158,26 +153,25 @@ def _fetch_image_sync(keyword: str, slide_index: int):
 
     encoded_keyword = urllib.parse.quote(clean_keyword)
     
+    # KAFOLATLI ISHLAYDIGAN MANBALAR (Unsplash o'rniga):
     urls = [
-        f"https://source.unsplash.com/800x600/?{encoded_keyword}",
-        f"https://image.pollinations.ai/prompt/photo%20of%20{encoded_keyword}?width=800&height=600&nologo=true"
+        f"https://image.pollinations.ai/prompt/photo%20of%20{encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index}",
+        f"https://loremflickr.com/800/600/{encoded_keyword}?lock={slide_index}",
+        f"https://picsum.photos/seed/{encoded_keyword}_{slide_index}/800/600"
     ]
-
-    direct_unsplash = f"https://source.unsplash.com/featured/800x600/?{encoded_keyword}&sig={slide_index}"
-    urls.insert(0, direct_unsplash)
 
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
     for url in urls:
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 if resp.status == 200:
                     image_bytes = resp.read()
                     if len(image_bytes) > 2000:
                         return io.BytesIO(image_bytes)
         except Exception as e:
-            print(f"[IMAGE LOG] URL bo'yicha rasm yuklashda xato ({url}): {e}")
+            print(f"[IMAGE LOG] Rasm yuklashda xatolik ({url}): {e}")
             continue
 
     return None
