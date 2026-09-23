@@ -14,19 +14,37 @@ from pptx.enum.text import PP_ALIGN
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+def _get_active_gemini_models():
+    """Google'dan hozirgi faol modellar ro'yxatini dinamik ravishda olish"""
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            valid_models = []
+            for m in data.get("models", []):
+                name = m.get("name", "").replace("models/", "")
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods and "flash" in name:
+                    valid_models.append(name)
+            if valid_models:
+                return valid_models
+    except Exception as e:
+        print(f"[GENERATOR LOG] Modellarni olishda xato: {e}")
+    
+    return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Gemini API orqali so'rov yuborish"""
+    """Gemini API orqali so'rov yuborish (Sodda va xavfsiz)"""
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
-    models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"]
+    models = _get_active_gemini_models()
     headers = {"Content-Type": "application/json"}
+    # Gemini 500 xatosini oldini olish uchun "image_prompt" so'ramaymiz, faqat "keyword" so'raymiz
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.7
-        }
+        "generationConfig": {"responseMimeType": "application/json"}
     }
 
     base_url = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -34,8 +52,7 @@ def _get_gemini_response_sync(prompt: str) -> str:
     for model in models:
         endpoint = f"{base_url}/{model}:generateContent?key={GEMINI_API_KEY}"
         try:
-            # Timeout 30 soniyaga oshirildi
-            response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 text = data['candidates'][0]['content']['parts'][0]['text']
@@ -48,50 +65,21 @@ def _get_gemini_response_sync(prompt: str) -> str:
 
     raise Exception("Barcha Gemini modellarida xatolik yuz berdi.")
 
-def _get_default_slides(topic: str) -> list:
-    """Xatolik yuz berganda to'liq 6 ta slayd qaytaruvchi zaxira funksiyasi"""
-    return [
-        {
-            "title": topic,
-            "content": ["Taqdimot va asosiy tushunchalar", "Mavzuning umumiy sharhi va tahlili"],
-            "image_keyword": "office team meeting"
-        },
-        {
-            "title": f"1. {topic} - Asosiy maqsad va mohiyat",
-            "content": ["Mavzuning ustuvor yo'nalishlari", "Asosiy vazifalar va maqsadlar", "Kutilayotgan amaliy natijalar"],
-            "image_keyword": "business strategy chart"
-        },
-        {
-            "title": "2. Jarayon va amaliy tahlil",
-            "content": ["Tizimli yondashuv va tahlil", "Amaliyotdagi holat va ko'rsatkichlar", "Mavjud imkoniyatlar sharhi"],
-            "image_keyword": "financial chart on laptop"
-        },
-        {
-            "title": "3. Texnologiya va innovatsiyalar",
-            "content": ["Zamonaviy yechimlar va vositalar", "Samadorlikni oshirish usullari", "Avtomatlashtirish bosqichlari"],
-            "image_keyword": "modern server room"
-        },
-        {
-            "title": "4. Amaliy natijalar va misollar",
-            "content": ["Muvaffaqiyatli tajribalar", "Resurslardan unumli foydalanish", "Olingan xulosalar va tajriba"],
-            "image_keyword": "drip irrigation system"
-        },
-        {
-            "title": "5. Xulosa va kelajak rejalari",
-            "content": ["Istiqboldagi ustuvor vazifalar", "Rivojlanish bosqichlari", "Yakuniy xulosalar"],
-            "image_keyword": "robotics lab engineer"
-        }
-    ]
-
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
+    """Gemini'dan matn va SAHIFAGA MOS ANIQ 1-2 TA INGLIZCHA KALIT SO'Z so'raymiz"""
     if user_script:
         prompt = f"""
         Mavzu: {topic}
         Ssenariy: {user_script}
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
-        Har bir slayd uchun `image_keyword` maydoniga 1-3 so'zdan iborat real inglizcha obyekt nomini yoz (masalan: "office meeting", "water tap", "laptop chart").
-
+        
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini AKSI ETTIRUVCHI, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat vizual kalit so'z yoz (image_keyword).
+        Misollar:
+        - Suv va kran -> "water tap"
+        - Quyosh paneli -> "solar panel"
+        - Chiqindi urnasi -> "recycle bin"
+        
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
@@ -108,7 +96,11 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
-        Har bir slayd uchun `image_keyword` maydoniga 1-3 so'zdan iborat real inglizcha obyekt nomini yoz (masalan: "office meeting", "water tap", "laptop chart").
+        
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini AKSI ETTIRUVCHI, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat vizual kalit so'z yoz (image_keyword).
+        Misollar:
+        - Suv tejash -> "water conservation drop"
+        - Kompyuter -> "laptop keyboard"
 
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -116,7 +108,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "office team meeting"
+              "image_keyword": "solar panel"
             }}
           ]
         }}
@@ -124,100 +116,112 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
     try:
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-        clean_text = raw_response.strip()
+    except Exception as e:
+        print(f"[GENERATOR ERROR] API xatosi: {e}")
+        raw_response = ""
 
-        # Regex orqali aniq JSON obyektini ajratib olish
-        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-        if match:
-            clean_text = match.group(0)
+    try:
+        clean_text = raw_response.strip()
+        # Regex bilan JSON ni tozalaymiz (xavfsizroq formatda)
+        clean_text = re.sub(r"^\x60{3}(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\s*\x60{3}$", "", clean_text, flags=re.IGNORECASE).strip()
 
         data = json.loads(clean_text)
-        slides = []
         if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
-            slides = data["slides"]
+            return data["slides"]
         elif isinstance(data, list) and len(data) > 0:
-            slides = data
-
-        if slides and len(slides) >= 3:
-            print(f"[GENERATOR LOG] AI muvaffaqiyatli {len(slides)} ta slayd yaratdi!")
-            return slides
+            return data
     except Exception as e:
         print(f"[PARSER ERROR] JSON o'qishda xatolik: {e}")
 
-    print("[GENERATOR LOG] AI so'rovi muvaffaqiyatsiz tugagani uchun zaxiraga o'tildi.")
-    return _get_default_slides(topic)
+    return [
+        {
+            "title": topic,
+            "content": [f"{topic} - Kirish", "Asosiy yo'nalishlar", "Xulosalar"],
+            "image_keyword": "presentation technology"
+        }
+    ]
 
 def _fetch_from_wikimedia(keyword: str):
-    """Wikimedia Commons orqali mavzuga o'ta mos fotolarni yuklash"""
+    """Wikimedia Commons orqali mavzuga o'ta mos, kichik va xavfsiz fotolarni yuklash"""
     try:
         encoded_keyword = urllib.parse.quote(keyword)
+        # GSRLIMIT 5 ta variantni qidiradi
         url = (
             f"https://commons.wikimedia.org/w/api.php?"
-            f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=8"
+            f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=5"
             f"&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&format=json"
         )
         headers = {'User-Agent': 'TelegramSlideBot/1.0 (contact@telegram.org)'}
         req = urllib.request.Request(url, headers=headers)
-        
-        exclude_keywords = ['poster', 'flyer', 'advertisement', 'logo', 'banner', 'signboard', 'infographic', 'card']
-
-        with urllib.request.urlopen(req, timeout=6) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             pages = data.get('query', {}).get('pages', {})
             for page_id, page in pages.items():
-                title_lower = page.get('title', '').lower()
-                
-                if any(bad_word in title_lower for bad_word in exclude_keywords):
-                    continue
-
                 imageinfo = page.get('imageinfo', [{}])[0]
                 mime = imageinfo.get('mime', '')
                 img_url = imageinfo.get('url', '')
-
                 if mime in ['image/jpeg', 'image/png'] and img_url:
                     img_req = urllib.request.Request(img_url, headers=headers)
-                    with urllib.request.urlopen(img_req, timeout=8) as img_resp:
+                    with urllib.request.urlopen(img_req, timeout=10) as img_resp:
                         content = img_resp.read()
-                        if len(content) > 5000:
+                        # Rasm hajmini cheklash (4MB dan oshmasligi uchun)
+                        if 5000 < len(content) < 4000000:
                             return io.BytesIO(content)
     except Exception as e:
         print(f"[IMAGE LOG] Wikimedia xatosi ({keyword}): {e}")
     return None
 
-def _fetch_from_pollinations(keyword: str, slide_index: int):
-    """Pollinations AI orqali rasm olish"""
+def _fetch_from_pollinations_flux(keyword: str, slide_index: int):
+    """Siz aytgan g'oya: Oddiy kalit so'zdan kod ichida BATAfsil BATAfsil promt tuzib, mos rasm chizdirish"""
     try:
-        encoded_keyword = urllib.parse.quote(f"high quality photo of {keyword}")
-        url = f"https://image.pollinations.ai/prompt/{encoded_keyword}?width=800&height=600&nologo=true&seed={slide_index + 10}"
+        if not keyword:
+            keyword = "abstract professional background"
+            
+        # SIZ AYTGAN G'OYA SHU YERDA: Kod oddiy so'zni AI promtiga aylantiradi
+        # Midjourney / Flux darajasidagi batafsil promt
+        detailed_prompt = (
+            f"A professional realistic cinematic 4k photo of visual object {keyword}, "
+            f"eco-friendly concept, studio lighting, clean detailed background, professional look, nologo"
+        )
+        encoded_prompt = urllib.parse.quote(detailed_prompt)
+        
+        # Pollinations Flux modeli (seed orqali rasmni har doim har xil qilish)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=800&height=600&nologo=true&seed={slide_index + 100}"
+        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
                 content = resp.read()
-                if len(content) > 3000:
+                # Rasm hajmi va Telegram limiti (4MB) nazorati
+                if 3000 < len(content) < 4000000:
                     return io.BytesIO(content)
     except Exception as e:
-        print(f"[IMAGE LOG] Pollinations xatosi ({keyword}): {e}")
+        print(f"[IMAGE LOG] Pollinations Flux xatosi ({keyword}): {e}")
     return None
 
 def _fetch_image_sync(keyword: str, slide_index: int):
-    """Slayd kalit so'ziga mos rasmlarni yuklash"""
+    """Slayd kalit so'ziga mos, lekin ixcham (kichik hajmli) fotolarni yuklash"""
     if not keyword:
-        keyword = "office team meeting"
+        keyword = "technology"
 
     clean_keyword = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).strip()
     if not clean_keyword:
-        clean_keyword = "office team meeting"
+        clean_keyword = "business technology"
 
+    # 1-Manba: Wikimedia Commons (Haqiqiy professional foto)
     img_stream = _fetch_from_wikimedia(clean_keyword)
     if img_stream:
         return img_stream
 
+    # Rate-limit (429 xatosi) va IP bloklanishini oldini olish uchun 1 soniya kutiladi
     time.sleep(1)
 
-    img_stream = _fetch_from_pollinations(clean_keyword, slide_index)
+    # 2-Manba: Pollinations Flux (Kod ichida tuzilgan batafsil AI promt)
+    img_stream = _fetch_from_pollinations_flux(clean_keyword, slide_index)
     if img_stream:
         return img_stream
 
@@ -235,46 +239,21 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        title_text = slide_info.get("title", f"{i+1}-Slayd")
-
-        # Content matnlarini normalize qilish
-        raw_content = slide_info.get("content") or slide_info.get("points") or []
-        if isinstance(raw_content, str):
-            points = [p.strip() for p in raw_content.split("\n") if p.strip()]
-        elif isinstance(raw_content, list):
-            points = [str(p).strip() for p in raw_content if str(p).strip()]
-        else:
-            points = []
-
-        if not points:
-            points = [f"{title_text} bo'yicha asosiy tushunchalar", "Tahlil va amaliy ko'rsatkichlar"]
-
-        # 1-Slayd: Muqova (Title + Subtitle)
+        # 1-Slayd: Muqova
         if i == 0:
-            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.333), Inches(1.8))
+            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
             tf.word_wrap = True
             p = tf.paragraphs[0]
-            p.text = title_text
-            p.font.size = Pt(44)
+            p.text = slide_info.get("title", "Prezentatsiya")
+            p.font.size = Pt(48)
             p.font.bold = True
             p.font.color.rgb = PRIMARY_COLOR
             p.alignment = PP_ALIGN.CENTER
-
-            # Muqova osti matni (Subtitle)
-            sub_box = slide.shapes.add_textbox(Inches(1.5), Inches(4.2), Inches(10.333), Inches(2.5))
-            tf_sub = sub_box.text_frame
-            tf_sub.word_wrap = True
-            for idx, pt in enumerate(points):
-                p_sub = tf_sub.add_paragraph() if idx > 0 else tf_sub.paragraphs[0]
-                p_sub.text = pt
-                p_sub.font.size = Pt(22)
-                p_sub.font.color.rgb = TEXT_COLOR
-                p_sub.alignment = PP_ALIGN.CENTER
-                p_sub.space_after = Pt(10)
             continue
 
-        # Keyingi slaydlarning Sarlavhasi
+        # Sarlavha
+        title_text = slide_info.get("title", f"{i+1}-Slayd")
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -284,7 +263,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Rasm va Matn joylashuvi
+        # Slayd mazmuniga mos rasm olish
         keyword = slide_info.get("image_keyword", "")
         img_stream = _fetch_image_sync(keyword, i)
 
@@ -297,12 +276,19 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
 
-        for idx, point in enumerate(points):
-            p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
-            p.text = f"• {point}"
+        points = slide_info.get("content", [])
+        if isinstance(points, list):
+            for idx, point in enumerate(points):
+                p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
+                p.text = f"• {point}"
+                p.font.size = Pt(20)
+                p.font.color.rgb = TEXT_COLOR
+                p.space_after = Pt(14)
+        else:
+            p = tf_content.paragraphs[0]
+            p.text = f"• {points}"
             p.font.size = Pt(20)
             p.font.color.rgb = TEXT_COLOR
-            p.space_after = Pt(14)
 
         # Rasmni joylashtirish
         if img_stream:
