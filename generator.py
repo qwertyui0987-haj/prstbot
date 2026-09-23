@@ -152,21 +152,17 @@ def _fetch_image_sync(keyword: str, slide_index: int):
     if not keyword:
         keyword = "technology"
 
-    # Faqat harflardan iborat toza 1 ta so'z
     clean_keyword = re.sub(r'[^a-zA-Z]', '', keyword).lower().strip()
     if not clean_keyword:
         clean_keyword = "business"
 
     encoded_keyword = urllib.parse.quote(clean_keyword)
     
-    # Aniq qidiruv beruvchi ochiq servislar (Unsplash API va Pollinations Direct)
     urls = [
         f"https://source.unsplash.com/800x600/?{encoded_keyword}",
-        f"https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800", # zaxira
         f"https://image.pollinations.ai/prompt/photo%20of%20{encoded_keyword}?width=800&height=600&nologo=true"
     ]
 
-    # Har doim har xil aniq foto berishi uchun Unsplash Search API redirect usuli
     direct_unsplash = f"https://source.unsplash.com/featured/800x600/?{encoded_keyword}&sig={slide_index}"
     urls.insert(0, direct_unsplash)
 
@@ -265,4 +261,4 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
     return output_filename
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
-    return await asyncio-to_thread(_build_pptx_sync, slides_data, output_filename)
+    return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
