@@ -14,7 +14,7 @@ from pptx.enum.text import PP_ALIGN
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 def _get_active_gemini_models():
-    """Google'dan hozirgi faol modellar ro'yxatini dinamik ravishda olish"""
+    """Google'dan hozirgi faol modellar ro'yxatini olish"""
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
         resp = requests.get(url, timeout=10)
@@ -34,9 +34,8 @@ def _get_active_gemini_models():
     return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Gemini API orqali so'rov yuborish"""
     if not GEMINI_API_KEY:
-        raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
+        raise Exception("GEMINI_API_KEY topilmadi!")
 
     models = _get_active_gemini_models()
     headers = {"Content-Type": "application/json"}
@@ -53,8 +52,6 @@ def _get_gemini_response_sync(prompt: str) -> str:
                 data = response.json()
                 text = data['candidates'][0]['content']['parts'][0]['text']
                 return text
-            else:
-                print(f"[GENERATOR LOG] Gemini {model} status: {response.status_code}, msg: {response.text}")
         except Exception as err:
             print(f"[GENERATOR LOG] Gemini {model} ulanish xatosi: {err}")
             continue
@@ -62,118 +59,78 @@ def _get_gemini_response_sync(prompt: str) -> str:
     raise Exception("Barcha Gemini modellarida xatolik yuz berdi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
-    if user_script:
-        prompt = f"""
-        Mavzu: {topic}
-        Ssenariy: {user_script}
+    # SIZ aytgan g'oya: Gemini'dan rasm uchun o'ta batafsil va mos Promt so'raymiz
+    prompt = f"""
+    Mavzu: {topic}
+    {f'Ssenariy: {user_script}' if user_script else ''}
 
-        Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
-        
-        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1 ta so'z yoz (image_keyword).
-        Misollar:
-        - Slayd kran yoki suv haqida bo'lsa -> "water"
-        - Slayd quyosh haqida bo'lsa -> "sun"
-        - Slayd pul haqida bo'lsa -> "money"
-        - Slayd kompyuter haqida bo'lsa -> "computer"
-        
-        Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
+    Vazifa: EXACTLY 6 ta slayd yaratib ber.
+    
+    JUDA MUHIM SHART:
+    Har bir slayd uchun "image_prompt" maydonida shu slayd mazmunini AKSI ETTIRUVCHI, AI rasm generatori (Midjourney/Flux) tushunadigan, INGLIZ TILIDA O'TA BATAFSIL 1 ta tasviriy ko'rsatma (promt) yozib ber.
+
+    Misollar:
+    - Slayd suvni tejash haqida bo'lsa -> "A realistic photo of a clean water tap with fresh water drop, saving water concept, professional lighting, 4k"
+    - Slayd chiqindini saralash haqida bo'lsa -> "A realistic photo of colorful waste sorting recycle bins with plastic and paper icons, clean environment, 4k"
+    - Slayd yashil hududlar haqida bo'lsa -> "A realistic photo of people planting green tree saplings in a sunny city park, 4k"
+
+    Javobingiz faqat va faqat quyidagi JSON formatida bo'lsin:
+    {{
+      "slides": [
         {{
-          "slides": [
-            {{
-              "title": "Slayd sarlavhasi",
-              "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "water"
-            }}
-          ]
+          "title": "Slayd sarlavhasi",
+          "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+          "image_prompt": "A realistic detailed prompt in english for AI image generator"
         }}
-        """
-    else:
-        prompt = f"""
-        Mavzu: {topic}
-
-        Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
-        
-        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini ifodalaydigan, ingliz tilida O'TA ANIQ 1 ta so'z yoz (image_keyword).
-        Misollar:
-        - Slayd kran yoki suv haqida bo'lsa -> "water"
-        - Slayd quyosh haqida bo'lsa -> "sun"
-        - Slayd pul haqida bo'lsa -> "money"
-
-        Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
-        {{
-          "slides": [
-            {{
-              "title": "Slayd sarlavhasi",
-              "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "sun"
-            }}
-          ]
-        }}
-        """
+      ]
+    }}
+    """
 
     try:
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
-    except Exception as e:
-        print(f"[GENERATOR ERROR] API xatosi: {e}")
-        raw_response = ""
-
-    try:
         clean_text = raw_response.strip()
         clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
         clean_text = re.sub(r"\s*```$", "", clean_text, flags=re.IGNORECASE).strip()
 
         data = json.loads(clean_text)
-        if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
+        if isinstance(data, dict) and "slides" in data:
             return data["slides"]
-        elif isinstance(data, list) and len(data) > 0:
+        elif isinstance(data, list):
             return data
     except Exception as e:
-        print(f"[PARSER ERROR] JSON o'qishda xatolik: {e}")
+        print(f"[PARSER ERROR] JSON xatosi: {e}")
 
     return [
         {
             "title": topic,
-            "content": [
-                f"{topic} - Kirish va umumiy tushunchalar",
-                "Mavzuning asosiy yo'nalishlari va tahlili",
-                "Xulosalar va amaliy ahamiyati"
-            ],
-            "image_keyword": "presentation"
+            "content": ["Kirish va umumiy tushunchalar", "Asosiy yo'nalishlar", "Xulosalar"],
+            "image_prompt": f"A professional high quality presentation banner about {topic}"
         }
     ]
 
-def _fetch_image_sync(keyword: str, slide_index: int):
-    """Slayd kalit so'ziga mos, lekin ixcham (kichik hajmli) fotolarni yuklash"""
-    if not keyword:
-        keyword = "technology"
+def _fetch_image_sync(image_prompt: str, slide_index: int):
+    """Gemini yaratgan batafsil promt bo'yicha sun'iy intellekt orqali mos rasm chizdirish"""
+    if not image_prompt:
+        image_prompt = "professional business presentation background"
 
-    clean_keyword = re.sub(r'[^a-zA-Z]', '', keyword).lower().strip()
-    if not clean_keyword:
-        clean_keyword = "business"
-
-    encoded_keyword = urllib.parse.quote(clean_keyword)
+    # URL uchun xavfsiz formatga keltirish
+    encoded_prompt = urllib.parse.quote(image_prompt)
     
-    # Rasmlar hajmi o'ta katta bo'lib ketmasligi va Telegram limitiga (50MB) tushmasligi uchun o'lchamlariixchamlashtirildi
-    urls = [
-        f"https://image.pollinations.ai/prompt/photo%20of%20{encoded_keyword}?width=500&height=375&nologo=true&seed={slide_index + 10}",
-        f"https://loremflickr.com/500/375/{encoded_keyword}?lock={slide_index}",
-        f"https://picsum.photos/seed/{encoded_keyword}_{slide_index}/500/375"
-    ]
+    # Pollinations AI (Flux modelidan foydalanib, o'ta aniq va sifatli rasm chizib beradi)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=600&height=450&nologo=true&seed={slide_index + 42}"
 
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
-    for url in urls:
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                if resp.status == 200:
-                    image_bytes = resp.read()
-                    # Rasm hajmi 2KB dan katta va 3MB dan kichik bo'lishini ta'minlaymiz
-                    if 2000 < len(image_bytes) < 3000000:
-                        return io.BytesIO(image_bytes)
-        except Exception as e:
-            print(f"[IMAGE LOG] Rasm yuklashda xatolik ({url}): {e}")
-            continue
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            if resp.status == 200:
+                image_bytes = resp.read()
+                # Rasm hajmi va sifati nazorati (Telegram limitidan oshmasligi uchun)
+                if 2000 < len(image_bytes) < 4000000:
+                    return io.BytesIO(image_bytes)
+    except Exception as e:
+        print(f"[IMAGE GENERATION ERROR] Rasm chizishda xatolik: {e}")
 
     return None
 
@@ -189,7 +146,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Muqova
+        # Muqova
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
@@ -213,14 +170,11 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Slayd mazmuniga mos rasm olish
-        keyword = slide_info.get("image_keyword", "")
-        img_stream = _fetch_image_sync(keyword, i)
+        # Gemini bergan batafsil Promt orqali AI rasm yaratadi
+        img_prompt = slide_info.get("image_prompt", "")
+        img_stream = _fetch_image_sync(img_prompt, i)
 
-        if img_stream:
-            content_width = Inches(6.8)
-        else:
-            content_width = Inches(11.7)
+        content_width = Inches(6.8) if img_stream else Inches(11.7)
 
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), content_width, Inches(5.0))
         tf_content = content_box.text_frame
@@ -234,13 +188,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
                 p.font.size = Pt(20)
                 p.font.color.rgb = TEXT_COLOR
                 p.space_after = Pt(14)
-        else:
-            p = tf_content.paragraphs[0]
-            p.text = f"• {points}"
-            p.font.size = Pt(20)
-            p.font.color.rgb = TEXT_COLOR
 
-        # Rasmni joylashtirish
         if img_stream:
             try:
                 slide.shapes.add_picture(
