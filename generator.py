@@ -68,14 +68,16 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
-        Har bir slayd uchun alohida, mavzuga mos va BIR-BIRIGA O'XSHAMAYDIGAN inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
+        MUHIM: Har bir slaydning MAZMUNIGA va YAZILGAN FIKRLARIGA to'g'ri keladigan, ingliz tilidagi O'TA ANIQ 1-2 ta visual kalit so'z yoz (image_keyword).
+        Misol uchun: agar slayd suvni tejash va kranni yopish haqida bo'lsa -> "water faucet" yoki "water drop".
+        
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "technology"
+              "image_keyword": "water faucet"
             }}
           ]
         }}
@@ -85,14 +87,16 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
-        Har bir slayd uchun alohida, mavzuga mos va BIR-BIRIGA O'XSHAMAYDIGAN inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
+        MUHIM: Har bir slaydning MAZMUNIGA va YAZILGAN FIKRLARIGA to'g'ri keladigan, ingliz tilidagi O'TA ANIQ 1-2 ta visual kalit so'z yoz (image_keyword).
+        Misol uchun: agar slayd quyosh energiyasi haqida bo'lsa -> "solar panel", agar kompyuter haqida bo'lsa -> "laptop keyboard".
+
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "business"
+              "image_keyword": "solar panel"
             }}
           ]
         }}
@@ -129,18 +133,20 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         }
     ]
 
-def _fetch_image_sync(keyword: str, slide_index: int):
-    """Mavzuga va slayd indeksiga mos har xil rasmlarni yuklab olish"""
+def _fetch_image_sync(keyword: str, slide_title: str):
+    """Mavzuga va slayd mazmuniga aniq mos rasm yuklab olish"""
     if not keyword:
-        keyword = "business"
-        
-    encoded_keyword = urllib.parse.quote(keyword)
+        keyword = slide_title if slide_title else "presentation"
+
+    # Kalit so'zni tozalaymiz va probellarni URL formatiga o'tkazamiz
+    clean_keyword = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).strip()
+    encoded_keyword = urllib.parse.quote(clean_keyword)
     
-    # Har bir slayd uchun noyob (har xil) rasm beruvchi ishonchli manbalar
+    # Aniq tasvir yaratuvchi / qidiruvchi manbalar (Realistic photo yo'nalishida)
     urls = [
-        f"https://picsum.photos/seed/{encoded_keyword}_{slide_index}/800/600",
-        f"https://image.pollinations.ai/prompt/{encoded_keyword}%20high%20quality?width=800&height=600&nologo=true",
-        f"https://loremflickr.com/800/600/{encoded_keyword}"
+        f"https://image.pollinations.ai/prompt/realistic%20photo%20of%20{encoded_keyword}%20clean%20professional%20style?width=800&height=600&nologo=true",
+        f"https://loremflickr.com/800/600/{encoded_keyword}",
+        f"https://picsum.photos/seed/{encoded_keyword}/800/600"
     ]
 
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -148,10 +154,10 @@ def _fetch_image_sync(keyword: str, slide_index: int):
     for url in urls:
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 if resp.status == 200:
                     image_bytes = resp.read()
-                    if len(image_bytes) > 2000:
+                    if len(image_bytes) > 3000: # To'liq rasm ekanligiga ishonch hosil qilish
                         return io.BytesIO(image_bytes)
         except Exception as e:
             print(f"[IMAGE LOG] URL bo'yicha rasm yuklashda xato ({url}): {e}")
@@ -185,18 +191,19 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             continue
 
         # Sarlavha
+        title_text = slide_info.get("title", f"{i+1}-Slayd")
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
         p_title = tf_title.paragraphs[0]
-        p_title.text = slide_info.get("title", f"{i+1}-Slayd")
+        p_title.text = title_text
         p_title.font.size = Pt(32)
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Har bir slaydga mos har xil rasm olish
-        keyword = slide_info.get("image_keyword", "business")
-        img_stream = _fetch_image_sync(keyword, i)
+        # Slayd mazmuniga mos rasm olish
+        keyword = slide_info.get("image_keyword", "")
+        img_stream = _fetch_image_sync(keyword, title_text)
 
         if img_stream:
             content_width = Inches(6.8)
