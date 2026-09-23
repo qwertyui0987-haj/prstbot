@@ -20,7 +20,6 @@ def _get_active_gemini_models():
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            # Faqat generateContent va flash/pro modellarni ajratib olish
             valid_models = []
             for m in data.get("models", []):
                 name = m.get("name", "").replace("models/", "")
@@ -32,8 +31,7 @@ def _get_active_gemini_models():
     except Exception as e:
         print(f"[GENERATOR LOG] Modellarni olishda xato: {e}")
     
-    # Zaxira ro'yxat (Agressiv zaxira)
-    return ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+    return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
 
 def _get_gemini_response_sync(prompt: str) -> str:
     """Gemini API orqali so'rov yuborish"""
@@ -70,13 +68,14 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Ssenariy: {user_script}
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
+        Har bir slayd uchun mos, inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "business"
+              "image_keyword": "business strategy"
             }}
           ]
         }}
@@ -86,13 +85,14 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
+        Har bir slayd uchun mos, inglizcha 1-2 so'zdan iborat rasm kalit so'zi (image_keyword) ko'rsat.
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
           "slides": [
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "technology"
+              "image_keyword": "technology innovation"
             }}
           ]
         }}
@@ -104,7 +104,6 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         print(f"[GENERATOR ERROR] API xatosi: {e}")
         raw_response = ""
 
-    # JSON matnini tozalash va parse qilish
     try:
         clean_text = raw_response.strip()
         clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
@@ -118,7 +117,6 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     except Exception as e:
         print(f"[PARSER ERROR] JSON o'qishda xatolik: {e}")
 
-    # Zaxira slaydlari
     return [
         {
             "title": topic,
@@ -132,14 +130,35 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     ]
 
 def _fetch_image_sync(keyword: str):
-    try:
-        encoded = urllib.parse.quote(keyword)
-        url = f"https://source.unsplash.com/800x600/?{encoded}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            return io.BytesIO(resp.read())
-    except Exception:
-        return None
+    """Mavzuga mos yuqori sifatli rasmni Unsplash/Picsum manbalaridan yuklab olish"""
+    if not keyword:
+        keyword = "business"
+        
+    encoded_keyword = urllib.parse.quote(keyword)
+    urls = [
+        f"https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop", # Zaxira sifatli rasm
+        f"https://picsum.photos/800/600" # Zaxira rasm
+    ]
+    
+    # Unsplash manbasidan qidiruv bo'yicha to'g'ri rasm manbai
+    primary_url = f"https://source.unsplash.com/featured/800x600/?{encoded_keyword}"
+    urls.insert(0, primary_url)
+
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    image_bytes = resp.read()
+                    if len(image_bytes) > 1000:  # Rasm haqiqatan ham yuklanganligini tekshirish
+                        return io.BytesIO(image_bytes)
+        except Exception as e:
+            print(f"[IMAGE LOG] URL bo'yicha rasm yuklashda xato ({url}): {e}")
+            continue
+
+    return None
 
 def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
     prs = Presentation()
@@ -153,6 +172,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
+        # 1-Slayd: Muqova (Title Slide)
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
@@ -165,6 +185,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             p.alignment = PP_ALIGN.CENTER
             continue
 
+        # Asosiy slaydlar sarlavhasi
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -174,7 +195,18 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(7.0), Inches(5.0))
+        # Rasm yuklab olishga urinish
+        keyword = slide_info.get("image_keyword", "business")
+        img_stream = _fetch_image_sync(keyword)
+
+        # Agar rasm bo'lsa: Matn chapda (6.8 dlyum), Rasm o'ngda (4.8 dlyum)
+        # Agar rasm yuklanmasa: Matn butun slayd bo'ylab kengaytiriladi (11.7 dlyum)
+        if img_stream:
+            content_width = Inches(6.8)
+        else:
+            content_width = Inches(11.7)
+
+        content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), content_width, Inches(5.0))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
 
@@ -183,22 +215,26 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
             for idx, point in enumerate(points):
                 p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
                 p.text = f"• {point}"
-                p.font.size = Pt(22)
+                p.font.size = Pt(20)
                 p.font.color.rgb = TEXT_COLOR
                 p.space_after = Pt(14)
         else:
             p = tf_content.paragraphs[0]
             p.text = f"• {points}"
-            p.font.size = Pt(22)
+            p.font.size = Pt(20)
             p.font.color.rgb = TEXT_COLOR
 
-        keyword = slide_info.get("image_keyword", "topic")
-        img_stream = _fetch_image_sync(keyword)
+        # Rasmni o'ng tomonga chiroyli joylashtirish
         if img_stream:
             try:
-                slide.shapes.add_picture(img_stream, Inches(8.2), Inches(1.8), width=Inches(4.5))
-            except Exception:
-                pass
+                slide.shapes.add_picture(
+                    img_stream, 
+                    left=Inches(8.0), 
+                    top=Inches(1.8), 
+                    width=Inches(4.5)
+                )
+            except Exception as img_err:
+                print(f"[IMAGE ERROR] Slaydga rasm qo'shishda xatolik: {img_err}")
 
     prs.save(output_filename)
     return output_filename
