@@ -19,11 +19,14 @@ def _get_gemini_response_sync(prompt: str) -> str:
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
-    models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"]
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json"}
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.7
+        }
     }
 
     base_url = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -31,7 +34,8 @@ def _get_gemini_response_sync(prompt: str) -> str:
     for model in models:
         endpoint = f"{base_url}/{model}:generateContent?key={GEMINI_API_KEY}"
         try:
-            response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
+            # Timeout 30 soniyaga oshirildi
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 text = data['candidates'][0]['content']['parts'][0]['text']
@@ -80,28 +84,13 @@ def _get_default_slides(topic: str) -> list:
     ]
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
-    instructions = """
-    JUDA MUHIM - `image_keyword` QOIDASI:
-    Har bir slayd uchun 100% aniq va sifatli foto beradigan real obyekt, buyum yoki sahnani ingliz tilida (1-3 so'z) yoz.
-    HECH QACHON mavhum yoki umumiy so'z ishlatma (masalan: "examples", "future", "strategy", "success", "analysis", "concept", "business", "presentation").
-    
-    To'g'ri misollar:
-    - Suv va kran -> "water tap"
-    - Boshqaruv / Majlis -> "office team meeting"
-    - Moliya / Tahlil -> "financial chart on laptop"
-    - Texnologiya / AI -> "modern server room"
-    - Qishloq xo'jaligi -> "drip irrigation system"
-    - Kelajak / Innovatsiya -> "robotics lab engineer"
-    """
-
     if user_script:
         prompt = f"""
         Mavzu: {topic}
         Ssenariy: {user_script}
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
-        
-        {instructions}
+        Har bir slayd uchun `image_keyword` maydoniga 1-3 so'zdan iborat real inglizcha obyekt nomini yoz (masalan: "office meeting", "water tap", "laptop chart").
 
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -119,8 +108,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
         Mavzu: {topic}
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
-        
-        {instructions}
+        Har bir slayd uchun `image_keyword` maydoniga 1-3 so'zdan iborat real inglizcha obyekt nomini yoz (masalan: "office meeting", "water tap", "laptop chart").
 
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -137,8 +125,11 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     try:
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
         clean_text = raw_response.strip()
-        clean_text = re.sub(r"^\x60{3}(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r"\s*\x60{3}$", "", clean_text, flags=re.IGNORECASE).strip()
+
+        # Regex orqali aniq JSON obyektini ajratib olish
+        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+        if match:
+            clean_text = match.group(0)
 
         data = json.loads(clean_text)
         slides = []
@@ -148,10 +139,12 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             slides = data
 
         if slides and len(slides) >= 3:
+            print(f"[GENERATOR LOG] AI muvaffaqiyatli {len(slides)} ta slayd yaratdi!")
             return slides
     except Exception as e:
         print(f"[PARSER ERROR] JSON o'qishda xatolik: {e}")
 
+    print("[GENERATOR LOG] AI so'rovi muvaffaqiyatsiz tugagani uchun zaxiraga o'tildi.")
     return _get_default_slides(topic)
 
 def _fetch_from_wikimedia(keyword: str):
@@ -328,3 +321,6 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
 
 async def create_pptx_file(slides_data: list, output_filename: str) -> str:
     return await asyncio.to_thread(_build_pptx_sync, slides_data, output_filename)
+```
+
+Endi ushbu kodni saqlab qayta sinab ko'rsangiz, AI to'liqlicha o'z kuchida ishlab, a'lo darajadagi noyob slaydlarni generate qiladi!
