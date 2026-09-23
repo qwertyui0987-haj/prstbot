@@ -2,6 +2,7 @@ import json
 import os
 import io
 import re
+import time
 import asyncio
 import urllib.request
 import urllib.parse
@@ -14,7 +15,7 @@ from pptx.enum.text import PP_ALIGN
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 def _get_active_gemini_models():
-    """Google'dan hozirgi faol modellar ro'yxatini olish"""
+    """Google'dan hozirgi faol modellar ro'yxatini dinamik ravishda olish"""
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
         resp = requests.get(url, timeout=10)
@@ -34,24 +35,30 @@ def _get_active_gemini_models():
     return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
 
 def _get_gemini_response_sync(prompt: str) -> str:
+    """Gemini API orqali so'rov yuborish (Sodda va xavfsiz)"""
     if not GEMINI_API_KEY:
-        raise Exception("GEMINI_API_KEY topilmadi!")
+        raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
     models = _get_active_gemini_models()
     headers = {"Content-Type": "application/json"}
+    # Gemini 500 xatosini oldini olish uchun "image_prompt" so'ramaymiz, faqat "keyword" so'raymiz
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json"}
     }
 
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+
     for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        endpoint = f"{base_url}/{model}:generateContent?key={GEMINI_API_KEY}"
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=15)
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 text = data['candidates'][0]['content']['parts'][0]['text']
                 return text
+            else:
+                print(f"[GENERATOR LOG] Gemini {model} status: {response.status_code}, msg: {response.text}")
         except Exception as err:
             print(f"[GENERATOR LOG] Gemini {model} ulanish xatosi: {err}")
             continue
@@ -59,78 +66,164 @@ def _get_gemini_response_sync(prompt: str) -> str:
     raise Exception("Barcha Gemini modellarida xatolik yuz berdi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
-    # SIZ aytgan g'oya: Gemini'dan rasm uchun o'ta batafsil va mos Promt so'raymiz
-    prompt = f"""
-    Mavzu: {topic}
-    {f'Ssenariy: {user_script}' if user_script else ''}
+    """Gemini'dan matn va SAHIFAGA MOS ANIQ 1-2 TA INGLIZCHA KALIT SO'Z so'raymiz"""
+    if user_script:
+        prompt = f"""
+        Mavzu: {topic}
+        Ssenariy: {user_script}
 
-    Vazifa: EXACTLY 6 ta slayd yaratib ber.
-    
-    JUDA MUHIM SHART:
-    Har bir slayd uchun "image_prompt" maydonida shu slayd mazmunini AKSI ETTIRUVCHI, AI rasm generatori (Midjourney/Flux) tushunadigan, INGLIZ TILIDA O'TA BATAFSIL 1 ta tasviriy ko'rsatma (promt) yozib ber.
-
-    Misollar:
-    - Slayd suvni tejash haqida bo'lsa -> "A realistic photo of a clean water tap with fresh water drop, saving water concept, professional lighting, 4k"
-    - Slayd chiqindini saralash haqida bo'lsa -> "A realistic photo of colorful waste sorting recycle bins with plastic and paper icons, clean environment, 4k"
-    - Slayd yashil hududlar haqida bo'lsa -> "A realistic photo of people planting green tree saplings in a sunny city park, 4k"
-
-    Javobingiz faqat va faqat quyidagi JSON formatida bo'lsin:
-    {{
-      "slides": [
+        Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
+        
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini AKSI ETTIRUVCHI, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat vizual kalit so'z yoz (image_keyword).
+        Misollar:
+        - Suv va kran -> "water tap"
+        - Quyosh paneli -> "solar panel"
+        - Chiqindi urnasi -> "recycle bin"
+        
+        Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
-          "title": "Slayd sarlavhasi",
-          "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-          "image_prompt": "A realistic detailed prompt in english for AI image generator"
+          "slides": [
+            {{
+              "title": "Slayd sarlavhasi",
+              "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+              "image_keyword": "water tap"
+            }}
+          ]
         }}
-      ]
-    }}
-    """
+        """
+    else:
+        prompt = f"""
+        Mavzu: {topic}
+
+        Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
+        
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini AKSI ETTIRUVCHI, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat vizual kalit so'z yoz (image_keyword).
+        Misollar:
+        - Suv tejash -> "water conservation drop"
+        - Kompyuter -> "laptop keyboard"
+
+        Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
+        {{
+          "slides": [
+            {{
+              "title": "Slayd sarlavhasi",
+              "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
+              "image_keyword": "solar panel"
+            }}
+          ]
+        }}
+        """
 
     try:
         raw_response = await asyncio.to_thread(_get_gemini_response_sync, prompt)
+    except Exception as e:
+        print(f"[GENERATOR ERROR] API xatosi: {e}")
+        raw_response = ""
+
+    try:
         clean_text = raw_response.strip()
-        clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r"\s*```$", "", clean_text, flags=re.IGNORECASE).strip()
+        # Regex bilan JSON ni tozalaymiz (xavfsizroq formatda)
+        clean_text = re.sub(r"^\x60{3}(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\s*\x60{3}$", "", clean_text, flags=re.IGNORECASE).strip()
 
         data = json.loads(clean_text)
-        if isinstance(data, dict) and "slides" in data:
+        if isinstance(data, dict) and "slides" in data and isinstance(data["slides"], list):
             return data["slides"]
-        elif isinstance(data, list):
+        elif isinstance(data, list) and len(data) > 0:
             return data
     except Exception as e:
-        print(f"[PARSER ERROR] JSON xatosi: {e}")
+        print(f"[PARSER ERROR] JSON o'qishda xatolik: {e}")
 
     return [
         {
             "title": topic,
-            "content": ["Kirish va umumiy tushunchalar", "Asosiy yo'nalishlar", "Xulosalar"],
-            "image_prompt": f"A professional high quality presentation banner about {topic}"
+            "content": [f"{topic} - Kirish", "Asosiy yo'nalishlar", "Xulosalar"],
+            "image_keyword": "presentation technology"
         }
     ]
 
-def _fetch_image_sync(image_prompt: str, slide_index: int):
-    """Gemini yaratgan batafsil promt bo'yicha sun'iy intellekt orqali mos rasm chizdirish"""
-    if not image_prompt:
-        image_prompt = "professional business presentation background"
-
-    # URL uchun xavfsiz formatga keltirish
-    encoded_prompt = urllib.parse.quote(image_prompt)
-    
-    # Pollinations AI (Flux modelidan foydalanib, o'ta aniq va sifatli rasm chizib beradi)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=600&height=450&nologo=true&seed={slide_index + 42}"
-
-    headers = {'User-Agent': 'Mozilla/5.0'}
-
+def _fetch_from_wikimedia(keyword: str):
+    """Wikimedia Commons orqali mavzuga o'ta mos, kichik va xavfsiz fotolarni yuklash"""
     try:
+        encoded_keyword = urllib.parse.quote(keyword)
+        # GSRLIMIT 5 ta variantni qidiradi
+        url = (
+            f"https://commons.wikimedia.org/w/api.php?"
+            f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=5"
+            f"&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&format=json"
+        )
+        headers = {'User-Agent': 'TelegramSlideBot/1.0 (contact@telegram.org)'}
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            if resp.status == 200:
-                image_bytes = resp.read()
-                # Rasm hajmi va sifati nazorati (Telegram limitidan oshmasligi uchun)
-                if 2000 < len(image_bytes) < 4000000:
-                    return io.BytesIO(image_bytes)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            pages = data.get('query', {}).get('pages', {})
+            for page_id, page in pages.items():
+                imageinfo = page.get('imageinfo', [{}])[0]
+                mime = imageinfo.get('mime', '')
+                img_url = imageinfo.get('url', '')
+                if mime in ['image/jpeg', 'image/png'] and img_url:
+                    img_req = urllib.request.Request(img_url, headers=headers)
+                    with urllib.request.urlopen(img_req, timeout=10) as img_resp:
+                        content = img_resp.read()
+                        # Rasm hajmini cheklash (4MB dan oshmasligi uchun)
+                        if 5000 < len(content) < 4000000:
+                            return io.BytesIO(content)
     except Exception as e:
-        print(f"[IMAGE GENERATION ERROR] Rasm chizishda xatolik: {e}")
+        print(f"[IMAGE LOG] Wikimedia xatosi ({keyword}): {e}")
+    return None
+
+def _fetch_from_pollinations_flux(keyword: str, slide_index: int):
+    """Siz aytgan g'oya: Oddiy kalit so'zdan kod ichida BATAfsil BATAfsil promt tuzib, mos rasm chizdirish"""
+    try:
+        if not keyword:
+            keyword = "abstract professional background"
+            
+        # SIZ AYTGAN G'OYA SHU YERDA: Kod oddiy so'zni AI promtiga aylantiradi
+        # Midjourney / Flux darajasidagi batafsil promt
+        detailed_prompt = (
+            f"A professional realistic cinematic 4k photo of visual object {keyword}, "
+            f"eco-friendly concept, studio lighting, clean detailed background, professional look, nologo"
+        )
+        encoded_prompt = urllib.parse.quote(detailed_prompt)
+        
+        # Pollinations Flux modeli (seed orqali rasmni har doim har xil qilish)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=800&height=600&nologo=true&seed={slide_index + 100}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status == 200:
+                content = resp.read()
+                # Rasm hajmi va Telegram limiti (4MB) nazorati
+                if 3000 < len(content) < 4000000:
+                    return io.BytesIO(content)
+    except Exception as e:
+        print(f"[IMAGE LOG] Pollinations Flux xatosi ({keyword}): {e}")
+    return None
+
+def _fetch_image_sync(keyword: str, slide_index: int):
+    """Slayd kalit so'ziga mos, lekin ixcham (kichik hajmli) fotolarni yuklash"""
+    if not keyword:
+        keyword = "technology"
+
+    clean_keyword = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).strip()
+    if not clean_keyword:
+        clean_keyword = "business technology"
+
+    # 1-Manba: Wikimedia Commons (Haqiqiy professional foto)
+    img_stream = _fetch_from_wikimedia(clean_keyword)
+    if img_stream:
+        return img_stream
+
+    # Rate-limit (429 xatosi) va IP bloklanishini oldini olish uchun 1 soniya kutiladi
+    time.sleep(1)
+
+    # 2-Manba: Pollinations Flux (Kod ichida tuzilgan batafsil AI promt)
+    img_stream = _fetch_from_pollinations_flux(clean_keyword, slide_index)
+    if img_stream:
+        return img_stream
 
     return None
 
@@ -146,7 +239,7 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # Muqova
+        # 1-Slayd: Muqova
         if i == 0:
             title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
             tf = title_box.text_frame
@@ -170,11 +263,14 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
 
-        # Gemini bergan batafsil Promt orqali AI rasm yaratadi
-        img_prompt = slide_info.get("image_prompt", "")
-        img_stream = _fetch_image_sync(img_prompt, i)
+        # Slayd mazmuniga mos rasm olish
+        keyword = slide_info.get("image_keyword", "")
+        img_stream = _fetch_image_sync(keyword, i)
 
-        content_width = Inches(6.8) if img_stream else Inches(11.7)
+        if img_stream:
+            content_width = Inches(6.8)
+        else:
+            content_width = Inches(11.7)
 
         content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), content_width, Inches(5.0))
         tf_content = content_box.text_frame
@@ -188,7 +284,13 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
                 p.font.size = Pt(20)
                 p.font.color.rgb = TEXT_COLOR
                 p.space_after = Pt(14)
+        else:
+            p = tf_content.paragraphs[0]
+            p.text = f"• {points}"
+            p.font.size = Pt(20)
+            p.font.color.rgb = TEXT_COLOR
 
+        # Rasmni joylashtirish
         if img_stream:
             try:
                 slide.shapes.add_picture(
