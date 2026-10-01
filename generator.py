@@ -35,13 +35,12 @@ def _get_active_gemini_models():
     return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
 
 def _get_gemini_response_sync(prompt: str) -> str:
-    """Gemini API orqali so'rov yuborish (Sodda va xavfsiz)"""
+    """Gemini API orqali so'rov yuborish"""
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY topilmadi! Railway Variables bo'limiga GEMINI_API_KEY ni qo'shing.")
 
     models = _get_active_gemini_models()
     headers = {"Content-Type": "application/json"}
-    # Gemini 500 xatosini oldini olish uchun "image_prompt" so'ramaymiz, faqat "keyword" so'raymiz
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json"}
@@ -52,7 +51,7 @@ def _get_gemini_response_sync(prompt: str) -> str:
     for model in models:
         endpoint = f"{base_url}/{model}:generateContent?key={GEMINI_API_KEY}"
         try:
-            response = requests.post(endpoint, json=payload, headers=headers, timeout=15)
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=25)
             if response.status_code == 200:
                 data = response.json()
                 text = data['candidates'][0]['content']['parts'][0]['text']
@@ -66,7 +65,7 @@ def _get_gemini_response_sync(prompt: str) -> str:
     raise Exception("Barcha Gemini modellarida xatolik yuz berdi.")
 
 async def generate_presentation_content(topic: str, user_script: str = None) -> list:
-    """Gemini'dan matn va SAHIFAGA MOS ANIQ 1-2 TA INGLIZCHA KALIT SO'Z so'raymiz"""
+    """Gemini'dan matn va SAHIFAGA MOS ANIQ 1-3 TA INGLIZCHA REAL OBYEKT SO'RAYMIZ"""
     if user_script:
         prompt = f"""
         Mavzu: {topic}
@@ -74,11 +73,15 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
         Vazifa: Ushbu ssenariy bo'yicha EXACTLY 6 ta slayd yaratib ber.
         
-        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini AKSI ETTIRUVCHI, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat vizual kalit so'z yoz (image_keyword).
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini aks ettiruvchi REAL va ANIQ inglizcha obyekt yoki sahna nomini yoz (image_keyword).
+        Mavhum so'zlar yozma (masalan: "future", "strategy", "analysis", "examples" TAQIQLANADI).
+        Faqat real ob'ekt yoki ko'rish mumkin bo'lgan sahna bo'lsin!
         Misollar:
-        - Suv va kran -> "water tap"
-        - Quyosh paneli -> "solar panel"
-        - Chiqindi urnasi -> "recycle bin"
+        - Suv tejamkorligi -> "water tap drop"
+        - Quyosh energiyasi -> "solar panel field"
+        - Sun'iy intellekt -> "modern server room"
+        - Moliya/Biznes -> "office team meeting"
+        - Dehqonchilik -> "green wheat field"
         
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -86,7 +89,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "water tap"
+              "image_keyword": "water tap drop"
             }}
           ]
         }}
@@ -97,10 +100,14 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
         Vazifa: Ushbu mavzu bo'yicha EXACTLY 6 ta slaydli prezentatsiya yarat.
         
-        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini AKSI ETTIRUVCHI, ingliz tilida O'TA ANIQ 1-2 so'zdan iborat vizual kalit so'z yoz (image_keyword).
+        JUDA MUHIM: Har bir slayd uchun shu slayd mazmunini aks ettiruvchi REAL va ANIQ inglizcha obyekt yoki sahna nomini yoz (image_keyword).
+        Mavhum so'zlar yozma (masalan: "future", "strategy", "analysis", "examples" TAQIQLANADI).
+        Faqat real ob'ekt yoki ko'rish mumkin bo'lgan sahna bo'lsin!
         Misollar:
-        - Suv tejash -> "water conservation drop"
-        - Kompyuter -> "laptop keyboard"
+        - Suv tejamkorligi -> "water tap drop"
+        - Quyosh energiyasi -> "solar panel field"
+        - Sun'iy intellekt -> "modern server room"
+        - Moliya/Biznes -> "office team meeting"
 
         Javobingiz faqat va faqat quyidagi JSON tuzilmasida bo'lishi shart:
         {{
@@ -108,7 +115,7 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
             {{
               "title": "Slayd sarlavhasi",
               "content": ["Fikr 1", "Fikr 2", "Fikr 3"],
-              "image_keyword": "solar panel"
+              "image_keyword": "office team meeting"
             }}
           ]
         }}
@@ -122,7 +129,6 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
 
     try:
         clean_text = raw_response.strip()
-        # Regex bilan JSON ni tozalaymiz (xavfsizroq formatda)
         clean_text = re.sub(r"^\x60{3}(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
         clean_text = re.sub(r"\s*\x60{3}$", "", clean_text, flags=re.IGNORECASE).strip()
 
@@ -137,35 +143,47 @@ async def generate_presentation_content(topic: str, user_script: str = None) -> 
     return [
         {
             "title": topic,
-            "content": [f"{topic} - Kirish", "Asosiy yo'nalishlar", "Xulosalar"],
-            "image_keyword": "presentation technology"
+            "content": [f"{topic} - Kirish va umumiy tushunchalar", "Asosiy ustuvor yo'nalishlar", "Amaliy natijalar va xulosalar"],
+            "image_keyword": "office team meeting"
         }
     ]
 
 def _fetch_from_wikimedia(keyword: str):
-    """Wikimedia Commons orqali mavzuga o'ta mos, kichik va xavfsiz fotolarni yuklash"""
+    """Wikimedia Commons orqali mavzuga o'ta mos va keraksiz reklamalarsiz fotolarni yuklash"""
     try:
         encoded_keyword = urllib.parse.quote(keyword)
-        # GSRLIMIT 5 ta variantni qidiradi
         url = (
             f"https://commons.wikimedia.org/w/api.php?"
-            f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=5"
+            f"action=query&generator=search&gsrsearch={encoded_keyword}&gsrlimit=8"
             f"&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&format=json"
         )
         headers = {'User-Agent': 'TelegramSlideBot/1.0 (contact@telegram.org)'}
         req = urllib.request.Request(url, headers=headers)
+        
+        # Keraksiz reklama, poster, logo va chizmalarni tashlab o'tish uchun filtr
+        exclude_keywords = [
+            'poster', 'flyer', 'advertisement', 'logo', 'banner', 'signboard', 
+            'infographic', 'card', 'diagram', 'map', 'flag', 'icon', 'symbol', 'vector'
+        ]
+
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             pages = data.get('query', {}).get('pages', {})
             for page_id, page in pages.items():
+                title_lower = page.get('title', '').lower()
+                
+                # Agar nomida reklama/poster kabi so'zlar bo'lsa, o'tkazib yuboramiz
+                if any(bad_word in title_lower for bad_word in exclude_keywords):
+                    continue
+
                 imageinfo = page.get('imageinfo', [{}])[0]
                 mime = imageinfo.get('mime', '')
                 img_url = imageinfo.get('url', '')
+
                 if mime in ['image/jpeg', 'image/png'] and img_url:
                     img_req = urllib.request.Request(img_url, headers=headers)
                     with urllib.request.urlopen(img_req, timeout=10) as img_resp:
                         content = img_resp.read()
-                        # Rasm hajmini cheklash (4MB dan oshmasligi uchun)
                         if 5000 < len(content) < 4000000:
                             return io.BytesIO(content)
     except Exception as e:
@@ -173,30 +191,27 @@ def _fetch_from_wikimedia(keyword: str):
     return None
 
 def _fetch_from_pollinations_flux(keyword: str, slide_index: int):
-    """Siz aytgan g'oya: Oddiy kalit so'zdan kod ichida BATAfsil BATAfsil promt tuzib, mos rasm chizdirish"""
+    """Pollinations AI orqali har qanday mavzuga 100% mos va aniq fotolarni chizdirish"""
     try:
         if not keyword:
-            keyword = "abstract professional background"
+            keyword = "modern office meeting"
             
-        # SIZ AYTGAN G'OYA SHU YERDA: Kod oddiy so'zni AI promtiga aylantiradi
-        # Midjourney / Flux darajasidagi batafsil promt
+        # Aniq va universal foto promti ("eco-friendly" kabi keraksiz so'zlardan tozalandi)
         detailed_prompt = (
-            f"A professional realistic cinematic 4k photo of visual object {keyword}, "
-            f"eco-friendly concept, studio lighting, clean detailed background, professional look, nologo"
+            f"A high quality realistic professional photo of {keyword}, "
+            f"clean background, studio lighting, detailed visual, nologo, no text"
         )
         encoded_prompt = urllib.parse.quote(detailed_prompt)
         
-        # Pollinations Flux modeli (seed orqali rasmni har doim har xil qilish)
         url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=800&height=600&nologo=true&seed={slide_index + 100}"
         
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=12) as resp:
             if resp.status == 200:
                 content = resp.read()
-                # Rasm hajmi va Telegram limiti (4MB) nazorati
                 if 3000 < len(content) < 4000000:
                     return io.BytesIO(content)
     except Exception as e:
@@ -204,23 +219,22 @@ def _fetch_from_pollinations_flux(keyword: str, slide_index: int):
     return None
 
 def _fetch_image_sync(keyword: str, slide_index: int):
-    """Slayd kalit so'ziga mos, lekin ixcham (kichik hajmli) fotolarni yuklash"""
+    """Slayd kalit so'ziga mos fotolarni qidirish va yuklash"""
     if not keyword:
-        keyword = "technology"
+        keyword = "office team meeting"
 
     clean_keyword = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).strip()
     if not clean_keyword:
-        clean_keyword = "business technology"
+        clean_keyword = "office team meeting"
 
-    # 1-Manba: Wikimedia Commons (Haqiqiy professional foto)
+    # 1-Manba: Wikimedia Commons (Xavfsiz va filtrlangan fotolar)
     img_stream = _fetch_from_wikimedia(clean_keyword)
     if img_stream:
         return img_stream
 
-    # Rate-limit (429 xatosi) va IP bloklanishini oldini olish uchun 1 soniya kutiladi
     time.sleep(1)
 
-    # 2-Manba: Pollinations Flux (Kod ichida tuzilgan batafsil AI promt)
+    # 2-Manba: Pollinations Flux (Aniq moslashtirilgan AI promt)
     img_stream = _fetch_from_pollinations_flux(clean_keyword, slide_index)
     if img_stream:
         return img_stream
@@ -239,21 +253,46 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         blank_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(blank_layout)
 
-        # 1-Slayd: Muqova
+        title_text = slide_info.get("title", f"{i+1}-Slayd")
+
+        # Content matnlarini normalize qilish
+        raw_content = slide_info.get("content") or slide_info.get("points") or []
+        if isinstance(raw_content, str):
+            points = [p.strip() for p in raw_content.split("\n") if p.strip()]
+        elif isinstance(raw_content, list):
+            points = [str(p).strip() for p in raw_content if str(p).strip()]
+        else:
+            points = []
+
+        if not points:
+            points = [f"{title_text} bo'yicha asosiy tushunchalar", "Tahlil va amaliy ko'rsatkichlar"]
+
+        # 1-Slayd: Muqova (Title + Subtitle)
         if i == 0:
-            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.8), Inches(11.333), Inches(2.0))
+            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.333), Inches(1.8))
             tf = title_box.text_frame
             tf.word_wrap = True
             p = tf.paragraphs[0]
-            p.text = slide_info.get("title", "Prezentatsiya")
-            p.font.size = Pt(48)
+            p.text = title_text
+            p.font.size = Pt(44)
             p.font.bold = True
             p.font.color.rgb = PRIMARY_COLOR
             p.alignment = PP_ALIGN.CENTER
+
+            # Muqova osti matni (Subtitle)
+            sub_box = slide.shapes.add_textbox(Inches(1.5), Inches(4.2), Inches(10.333), Inches(2.5))
+            tf_sub = sub_box.text_frame
+            tf_sub.word_wrap = True
+            for idx, pt in enumerate(points):
+                p_sub = tf_sub.add_paragraph() if idx > 0 else tf_sub.paragraphs[0]
+                p_sub.text = pt
+                p_sub.font.size = Pt(22)
+                p_sub.font.color.rgb = TEXT_COLOR
+                p_sub.alignment = PP_ALIGN.CENTER
+                p_sub.space_after = Pt(10)
             continue
 
-        # Sarlavha
-        title_text = slide_info.get("title", f"{i+1}-Slayd")
+        # Keyingi slaydlarning Sarlavhasi
         title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -276,19 +315,12 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
 
-        points = slide_info.get("content", [])
-        if isinstance(points, list):
-            for idx, point in enumerate(points):
-                p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
-                p.text = f"• {point}"
-                p.font.size = Pt(20)
-                p.font.color.rgb = TEXT_COLOR
-                p.space_after = Pt(14)
-        else:
-            p = tf_content.paragraphs[0]
-            p.text = f"• {points}"
+        for idx, point in enumerate(points):
+            p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
+            p.text = f"• {point}"
             p.font.size = Pt(20)
             p.font.color.rgb = TEXT_COLOR
+            p.space_after = Pt(14)
 
         # Rasmni joylashtirish
         if img_stream:
