@@ -19,10 +19,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# generator.py din proiectul tău
+# generator.py din proyektingizdan
 from generator import generate_presentation_content, create_pptx_file
 
-# Setări generale
+# Setari generale
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
@@ -30,7 +30,7 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 # Configurare Logging
 logging.basicConfig(level=logging.INFO)
 
-# Configurare Bază de Date SQLite
+# Configurare Baza de Date SQLite
 conn = sqlite3.connect("bot_database.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -64,12 +64,22 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
 )
 """)
 
-# Setări implicite
+# Foydalanuvchilar qaysi promokodni ishlatganini kuzatish uchun yangi jadval
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS user_promos (
+    user_id INTEGER,
+    code TEXT,
+    used_at TEXT,
+    PRIMARY KEY (user_id, code)
+)
+""")
+
+# Setari implicite
 cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('free_mode', 'true')")
 cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('slide_price', '5000')")
 conn.commit()
 
-# Stări FSM
+# Stari FSM
 class PresentationState(StatesGroup):
     waiting_for_topic = State()
     waiting_for_script = State()
@@ -84,7 +94,7 @@ class AdminState(StatesGroup):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Funcții Ajutătoare
+# Functii Ajutatoare
 def is_free_mode():
     cursor.execute("SELECT value FROM settings WHERE key='free_mode'")
     res = cursor.fetchone()
@@ -103,14 +113,17 @@ def has_active_subscription(user_id: int) -> bool:
     expire_str = res[0]
     if expire_str == "LIFETIME":
         return True
-    expire_date = datetime.datetime.fromisoformat(expire_str)
-    return datetime.datetime.now() < expire_date
+    try:
+        expire_date = datetime.datetime.fromisoformat(expire_str)
+        return datetime.datetime.now() < expire_date
+    except Exception:
+        return False
 
 # Meniu Principal
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📊 Slayd yaratish")],
-        [KeyboardButton(text="🎟 Promokod kiritish"), KeyboardButton(text="ℹ️ Ma'lumot")]
+        [KeyboardButton(text="🎟 Promokod kiritish"), KeyboardButton(text="ℹ️️ Ma'lumot")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -131,7 +144,8 @@ async def start_handler(message: Message):
 # Meniu Admin
 @dp.message(Command("admin"))
 async def admin_handler(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if ADMIN_ID == 0 or message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Siz admin emassiz yoki ADMIN_ID sozlanmagan!")
         return
 
     cursor.execute("SELECT COUNT(*) FROM users")
@@ -140,12 +154,17 @@ async def admin_handler(message: Message):
     free_status = "🟢 TEKIN" if is_free_mode() else "🔴 TO'LOVLI"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Rejimni o'zgartirish ({free_status})", callback_data="toggle_free_mode")],
-        [InlineKeyboardButton(text="➕ Yangi Promokod yaratish", callback_data="add_promo")],
-        [InlineKeyboardButton(text="📊 Statistika", callback_data="admin_stats")]
+        [InlineKeyboardButton(text=f"Rejim: {free_status}", callback_data="toggle_free_mode")],
+        [InlineKeyboardButton(text="➕ Yangi Promokod yaratish", callback_data="add_promo")]
     ])
 
-    await message.answer(f"⚙️ **Admin Paneli**\n\nJami foydalanuvchilar: {total_users}\nJoriy rejim: {free_status}", reply_markup=kb, parse_mode="Markdown")
+    await message.answer(
+        f"⚙️ **Admin Paneli**\n\n"
+        f"👥 Jami foydalanuvchilar: {total_users} ta\n"
+        f"⚡️ Bot rejimi: {free_status}", 
+        reply_markup=kb, 
+        parse_mode="Markdown"
+    )
 
 @dp.callback_query(F.data == "toggle_free_mode")
 async def toggle_free_mode_callback(call: CallbackQuery):
@@ -203,11 +222,21 @@ async def process_promo_input(message: Message, state: FSMContext):
     code = message.text.strip().upper()
     user_id = message.from_user.id
 
+    # 1. Promokod mavjudligini tekshirish
     cursor.execute("SELECT duration FROM promo_codes WHERE code=?", (code,))
     res = cursor.fetchone()
 
     if not res:
         await message.answer("❌ Noto'g'ri yoki mavjud bo'lmagan promokod!")
+        await state.clear()
+        return
+
+    # 2. Foydalanuvchi bu promokodni ilgari ishlatgan-ishlatmaganligini tekshirish
+    cursor.execute("SELECT 1 FROM user_promos WHERE user_id=? AND code=?", (user_id, code))
+    already_used = cursor.fetchone()
+
+    if already_used:
+        await message.answer("⚠️ Siz ushbu promokodni alaqachon ishlatgansiz! Qayta ishlatish mumkin emas.")
         await state.clear()
         return
 
@@ -226,12 +255,14 @@ async def process_promo_input(message: Message, state: FSMContext):
     else:
         expire_str = "LIFETIME"
 
+    # Obuna berish va foydalanuvchining promokod ishlatganini saqlab qo'yish
     cursor.execute("INSERT OR REPLACE INTO user_subscriptions (user_id, expire_at) VALUES (?, ?)", (user_id, expire_str))
+    cursor.execute("INSERT INTO user_promos (user_id, code, used_at) VALUES (?, ?, ?)", (user_id, code, now.isoformat()))
     cursor.execute("UPDATE promo_codes SET used_count = used_count + 1 WHERE code=?", (code,))
     conn.commit()
 
     await state.clear()
-    await message.answer(f"🎉 Tabriklaymiz! Promokod faollashtirildi.\nSizga obuna taqdim etildi.")
+    await message.answer("🎉 Tabriklaymiz! Promokod muvaffaqiyatli faollashtirildi.\nSizga obuna taqdim etildi.")
 
 # Creare Prezentare
 @dp.message(F.text == "📊 Slayd yaratish")
@@ -285,7 +316,7 @@ async def generate_and_deliver(message: Message, user_id: int, state: FSMContext
             )
             return
         else:
-            await message.answer("⚠️ Hozirda to mezon tizimi faol emas. Iltimos adminga murojaat qiling.")
+            await message.answer("⚠️ Hozirda to'lov tizimi faol emas. Iltimos adminga murojaat qiling.")
             await state.clear()
             return
 
