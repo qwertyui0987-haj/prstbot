@@ -27,6 +27,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 
+# KANAL VA GURUH SOZLAMALARI (Shu yerga kanalingiz va guruhingiz manzillarini yozing)
+CHANNEL_ID = os.getenv("-1003838879305", "@presen1tationbotyangiliklari") 
+CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/presen1tationbotyangiliklari")
+GROUP_URL = os.getenv("https://t.me/presen1tationbotyangiliklarichat", "@presen1tationbotyangiliklarichat")
+
 # Configurare Logging
 logging.basicConfig(level=logging.INFO)
 
@@ -64,7 +69,6 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
 )
 """)
 
-# Foydalanuvchilar qaysi promokodni ishlatganini kuzatish uchun yangi jadval
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS user_promos (
     user_id INTEGER,
@@ -119,11 +123,32 @@ def has_active_subscription(user_id: int) -> bool:
     except Exception:
         return False
 
+# KANALGA OBUNANi TEKSHIRISH FUNKSIYASI
+async def check_channel_sub(user_id: int) -> bool:
+    if not CHANNEL_ID or CHANNEL_ID == "@kanalingiz_username":
+        return True # Kanal sozlanmagan bo'lsa o'tkazib yuboradi
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        if member.status in ["creator", "administrator", "member"]:
+            return True
+        return False
+    except Exception as e:
+        logging.error(f"Kanal obunasini tekshirishda xatolik: {e}")
+        return True
+
+def get_subscription_keyboard():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Kanalimizga obuna bo'lish", url=CHANNEL_URL)],
+        [InlineKeyboardButton(text="✅ Obunani tekshirish", callback_data="check_subscription")]
+    ])
+    return kb
+
 # Meniu Principal
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📊 Slayd yaratish")],
-        [KeyboardButton(text="🎟 Promokod kiritish"), KeyboardButton(text="ℹ️️ Ma'lumot")]
+        [KeyboardButton(text="🎟 Promokod kiritish"), KeyboardButton(text="💬 Guruhimiz (Fikr bildirish)")],
+        [KeyboardButton(text="ℹ️ Ma'lumot")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -138,8 +163,46 @@ async def start_handler(message: Message):
                    (user_id, full_name, now_str))
     conn.commit()
 
+    # Majburiy obunani tekshirish
+    is_subscribed = await check_channel_sub(user_id)
+    if not is_subscribed:
+        await message.answer(
+            f"Salom, {full_name}!\n\n"
+            f"⚠️ Botdan foydalanish uchun avval rasmiy **yangiliklar kanalimizga** obuna bo'ling. "
+            f"Kanalda yangiliklar va tekin **promokodlar** berib boriladi!",
+            reply_markup=get_subscription_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
+
     text = f"Salom, {full_name}! Prezentatsiya yaratuvchi botga xush kelibsiz.\n\nSlayd yaratish uchun quyidagi tugmani bosing:"
     await message.answer(text, reply_markup=get_main_keyboard())
+
+# Obunani tekshirish tugmasi (Callback)
+@dp.callback_query(F.data == "check_subscription")
+async def check_sub_callback(call: CallbackQuery):
+    user_id = call.from_user.id
+    is_subscribed = await check_channel_sub(user_id)
+
+    if is_subscribed:
+        await call.answer("✅ Rahmat! Obuna tasdiqlandi.", show_alert=True)
+        await call.message.delete()
+        await call.message.answer("Xush kelibsiz! Kerakli bo'limni tanlang:", reply_markup=get_main_keyboard())
+    else:
+        await call.answer("❌ Siz hali kanalga obuna bo'lmadingiz!", show_alert=True)
+
+# Guruh va Fikr bildirish tugmasi
+@dp.message(F.text == "💬 Guruhimiz (Fikr bildirish)")
+async def group_info_handler(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Guruhga o'tish va fikr yozish", url=GROUP_URL)]
+    ])
+    await message.answer(
+        "💬 **Bizning rasmiy muokama guruhimiz!**\n\n"
+        "Guruhda o'zingizning fikrlaringizni, takliflaringizni yozib qoldirishingiz va boshqa foydalanuvchilar bilan muloqot qilishingiz mumkin.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
 
 # Meniu Admin
 @dp.message(Command("admin"))
@@ -214,6 +277,11 @@ async def process_promo_duration(call: CallbackQuery, state: FSMContext):
 # Utilizare Promokod
 @dp.message(F.text == "🎟 Promokod kiritish")
 async def enter_promo_start(message: Message, state: FSMContext):
+    is_subscribed = await check_channel_sub(message.from_user.id)
+    if not is_subscribed:
+        await message.answer("⚠️ Botdan foydalanish uchun avval kanalga obuna bo'ling:", reply_markup=get_subscription_keyboard())
+        return
+
     await state.set_state(PromoState.waiting_for_code)
     await message.answer("Sizda promokod bormi? Promokodni kiriting:")
 
@@ -222,7 +290,6 @@ async def process_promo_input(message: Message, state: FSMContext):
     code = message.text.strip().upper()
     user_id = message.from_user.id
 
-    # 1. Promokod mavjudligini tekshirish
     cursor.execute("SELECT duration FROM promo_codes WHERE code=?", (code,))
     res = cursor.fetchone()
 
@@ -231,12 +298,11 @@ async def process_promo_input(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # 2. Foydalanuvchi bu promokodni ilgari ishlatgan-ishlatmaganligini tekshirish
     cursor.execute("SELECT 1 FROM user_promos WHERE user_id=? AND code=?", (user_id, code))
     already_used = cursor.fetchone()
 
     if already_used:
-        await message.answer("⚠️ Siz ushbu promokodni alaqachon ishlatgansiz! Qayta ishlatish mumkin emas.")
+        await message.answer("⚠️ Siz ushbu promokodni alaqachon ishlatgansiz!")
         await state.clear()
         return
 
@@ -255,7 +321,6 @@ async def process_promo_input(message: Message, state: FSMContext):
     else:
         expire_str = "LIFETIME"
 
-    # Obuna berish va foydalanuvchining promokod ishlatganini saqlab qo'yish
     cursor.execute("INSERT OR REPLACE INTO user_subscriptions (user_id, expire_at) VALUES (?, ?)", (user_id, expire_str))
     cursor.execute("INSERT INTO user_promos (user_id, code, used_at) VALUES (?, ?, ?)", (user_id, code, now.isoformat()))
     cursor.execute("UPDATE promo_codes SET used_count = used_count + 1 WHERE code=?", (code,))
@@ -267,6 +332,11 @@ async def process_promo_input(message: Message, state: FSMContext):
 # Creare Prezentare
 @dp.message(F.text == "📊 Slayd yaratish")
 async def start_presentation_flow(message: Message, state: FSMContext):
+    is_subscribed = await check_channel_sub(message.from_user.id)
+    if not is_subscribed:
+        await message.answer("⚠️ Slayd yaratish uchun avval kanalga obuna bo'ling:", reply_markup=get_subscription_keyboard())
+        return
+
     await state.set_state(PresentationState.waiting_for_topic)
     await message.answer("Prezentatsiya mavzusini kiriting:")
 
@@ -299,7 +369,6 @@ async def generate_and_deliver(message: Message, user_id: int, state: FSMContext
     topic = data.get("topic")
     user_script = data.get("user_script")
 
-    # Verificare plată / acces gratuit
     if not is_free_mode() and not has_active_subscription(user_id):
         price = get_slide_price()
         if PAYMENT_PROVIDER_TOKEN:
@@ -320,7 +389,6 @@ async def generate_and_deliver(message: Message, user_id: int, state: FSMContext
             await state.clear()
             return
 
-    # Generare Prezentare
     msg = await message.answer("⏳ Prezentatsiya va rasmlar tayyorlanmoqda, iltimos kuting...")
 
     try:
