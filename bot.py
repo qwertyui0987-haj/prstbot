@@ -28,9 +28,9 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 
 # KANAL VA GURUH SOZLAMALARI (Shu yerga kanalingiz va guruhingiz manzillarini yozing)
-CHANNEL_ID = os.getenv("-1003838879305", "@presen1tationbotyangiliklari") 
-CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/presen1tationbotyangiliklari")
-GROUP_URL = os.getenv("https://t.me/presen1tationbotyangiliklarichat", "@presen1tationbotyangiliklarichat")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@kanalingiz_username") 
+CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/kanalingiz_username")
+GROUP_URL = os.getenv("GROUP_URL", "https://t.me/guruhingiz_username")
 
 # Configurare Logging
 logging.basicConfig(level=logging.INFO)
