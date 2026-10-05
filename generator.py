@@ -11,6 +11,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -160,7 +161,6 @@ def _fetch_from_wikimedia(keyword: str):
         headers = {'User-Agent': 'TelegramSlideBot/1.0 (contact@telegram.org)'}
         req = urllib.request.Request(url, headers=headers)
         
-        # Keraksiz reklama, poster, logo va chizmalarni tashlab o'tish uchun filtr
         exclude_keywords = [
             'poster', 'flyer', 'advertisement', 'logo', 'banner', 'signboard', 
             'infographic', 'card', 'diagram', 'map', 'flag', 'icon', 'symbol', 'vector'
@@ -172,7 +172,6 @@ def _fetch_from_wikimedia(keyword: str):
             for page_id, page in pages.items():
                 title_lower = page.get('title', '').lower()
                 
-                # Agar nomida reklama/poster kabi so'zlar bo'lsa, o'tkazib yuboramiz
                 if any(bad_word in title_lower for bad_word in exclude_keywords):
                     continue
 
@@ -196,7 +195,6 @@ def _fetch_from_pollinations_flux(keyword: str, slide_index: int):
         if not keyword:
             keyword = "modern office meeting"
             
-        # Aniq va universal foto promti ("eco-friendly" kabi keraksiz so'zlardan tozalandi)
         detailed_prompt = (
             f"A high quality realistic professional photo of {keyword}, "
             f"clean background, studio lighting, detailed visual, nologo, no text"
@@ -227,14 +225,12 @@ def _fetch_image_sync(keyword: str, slide_index: int):
     if not clean_keyword:
         clean_keyword = "office team meeting"
 
-    # 1-Manba: Wikimedia Commons (Xavfsiz va filtrlangan fotolar)
     img_stream = _fetch_from_wikimedia(clean_keyword)
     if img_stream:
         return img_stream
 
     time.sleep(1)
 
-    # 2-Manba: Pollinations Flux (Aniq moslashtirilgan AI promt)
     img_stream = _fetch_from_pollinations_flux(clean_keyword, slide_index)
     if img_stream:
         return img_stream
@@ -246,8 +242,11 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    PRIMARY_COLOR = RGBColor(20, 35, 60)
-    TEXT_COLOR = RGBColor(40, 40, 40)
+    # Zamonaviy ranglar palitrasi
+    PRIMARY_COLOR = RGBColor(16, 37, 66)      # To'q ko'k / Navy Blue
+    ACCENT_COLOR = RGBColor(0, 150, 214)     # Och moviy / Cyan Blue
+    TEXT_COLOR = RGBColor(45, 55, 72)        # Zamonaviy to'q kulrang
+    MUTED_LINE_COLOR = RGBColor(226, 232, 240) # Mayin kulrang chiziq
 
     for i, slide_info in enumerate(slides_data):
         blank_layout = prs.slide_layouts[6]
@@ -267,40 +266,86 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         if not points:
             points = [f"{title_text} bo'yicha asosiy tushunchalar", "Tahlil va amaliy ko'rsatkichlar"]
 
-        # 1-Slayd: Muqova (Title + Subtitle)
+        # -------------------------------------------------------------
+        # 1-Slayd: Muqova (Title + Subtitle + Dizayn Elementlari)
+        # -------------------------------------------------------------
         if i == 0:
-            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.333), Inches(1.8))
+            # Yuqori brending hoshiyasi (Header Bar)
+            top_bar = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(0.25)
+            )
+            top_bar.fill.solid()
+            top_bar.fill.fore_color.rgb = PRIMARY_COLOR
+            top_bar.line.fill.background()
+
+            # Pastki brending hoshiyasi (Footer Bar)
+            bottom_bar = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.3), Inches(13.333), Inches(0.2)
+            )
+            bottom_bar.fill.solid()
+            bottom_bar.fill.fore_color.rgb = ACCENT_COLOR
+            bottom_bar.line.fill.background()
+
+            # Sarlavha matn qutisi
+            title_box = slide.shapes.add_textbox(Inches(1.0), Inches(1.8), Inches(11.333), Inches(1.8))
             tf = title_box.text_frame
             tf.word_wrap = True
             p = tf.paragraphs[0]
             p.text = title_text
-            p.font.size = Pt(44)
+            p.font.size = Pt(42)
             p.font.bold = True
             p.font.color.rgb = PRIMARY_COLOR
             p.alignment = PP_ALIGN.CENTER
 
+            # Sarlavha ostidagi zamonaviy ajratuvchi chiziq (Accent line)
+            divider = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(5.666), Inches(3.8), Inches(2.0), Inches(0.06)
+            )
+            divider.fill.solid()
+            divider.fill.fore_color.rgb = ACCENT_COLOR
+            divider.line.fill.background()
+
             # Muqova osti matni (Subtitle)
-            sub_box = slide.shapes.add_textbox(Inches(1.5), Inches(4.2), Inches(10.333), Inches(2.5))
+            sub_box = slide.shapes.add_textbox(Inches(1.5), Inches(4.3), Inches(10.333), Inches(2.5))
             tf_sub = sub_box.text_frame
             tf_sub.word_wrap = True
             for idx, pt in enumerate(points):
                 p_sub = tf_sub.add_paragraph() if idx > 0 else tf_sub.paragraphs[0]
                 p_sub.text = pt
-                p_sub.font.size = Pt(22)
+                p_sub.font.size = Pt(20)
                 p_sub.font.color.rgb = TEXT_COLOR
                 p_sub.alignment = PP_ALIGN.CENTER
-                p_sub.space_after = Pt(10)
+                p_sub.space_after = Pt(8)
             continue
 
-        # Keyingi slaydlarning Sarlavhasi
-        title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.7), Inches(1.0))
+        # -------------------------------------------------------------
+        # 2-6 Slaydlar: Ichki Slaydlar Dizayni
+        # -------------------------------------------------------------
+        # 1. Yuqori zamonaviy hoshiya (Header Bar)
+        top_bar = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(0.15)
+        )
+        top_bar.fill.solid()
+        top_bar.fill.fore_color.rgb = PRIMARY_COLOR
+        top_bar.line.fill.background()
+
+        # 2. Sarlavha
+        title_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.5), Inches(11.7), Inches(0.9))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
         p_title = tf_title.paragraphs[0]
         p_title.text = title_text
-        p_title.font.size = Pt(32)
+        p_title.font.size = Pt(30)
         p_title.font.bold = True
         p_title.font.color.rgb = PRIMARY_COLOR
+
+        # 3. Sarlavha ostidagi vizual chiziq (Header line)
+        header_line = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0.8), Inches(1.45), Inches(11.7), Inches(0.03)
+        )
+        header_line.fill.solid()
+        header_line.fill.fore_color.rgb = MUTED_LINE_COLOR
+        header_line.line.fill.background()
 
         # Slayd mazmuniga mos rasm olish
         keyword = slide_info.get("image_keyword", "")
@@ -311,18 +356,19 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
         else:
             content_width = Inches(11.7)
 
-        content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), content_width, Inches(5.0))
+        # 4. Matn qutisi
+        content_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), content_width, Inches(4.8))
         tf_content = content_box.text_frame
         tf_content.word_wrap = True
 
         for idx, point in enumerate(points):
             p = tf_content.add_paragraph() if idx > 0 else tf_content.paragraphs[0]
             p.text = f"• {point}"
-            p.font.size = Pt(20)
+            p.font.size = Pt(19)
             p.font.color.rgb = TEXT_COLOR
             p.space_after = Pt(14)
 
-        # Rasmni joylashtirish
+        # 5. Rasmni joylashtirish
         if img_stream:
             try:
                 slide.shapes.add_picture(
@@ -333,6 +379,14 @@ def _build_pptx_sync(slides_data: list, output_filename: str) -> str:
                 )
             except Exception as img_err:
                 print(f"[IMAGE ERROR] Slaydga rasm qo'shishda xatolik: {img_err}")
+
+        # 6. Pastki burchak dizayn urg'usi (Footer Accent Strip)
+        footer_stripe = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0.8), Inches(7.1), Inches(1.5), Inches(0.05)
+        )
+        footer_stripe.fill.solid()
+        footer_stripe.fill.fore_color.rgb = ACCENT_COLOR
+        footer_stripe.line.fill.background()
 
     prs.save(output_filename)
     return output_filename
