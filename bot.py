@@ -28,8 +28,8 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 
 # Canal și grup
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@kanalingiz_username") 
-CHANNEL_URL = os.getenv("CHANNEL_URL", "[https://t.me/kanalingiz_username](https://t.me/kanalingiz_username)")
-GROUP_URL = os.getenv("GROUP_URL", "[https://t.me/guruhingiz_username](https://t.me/guruhingiz_username)")
+CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/kanalingiz_username")
+GROUP_URL = os.getenv("GROUP_URL", "https://t.me/guruhingiz_username")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -320,7 +320,7 @@ async def process_promo_input(message: Message, state: FSMContext):
 async def start_presentation_flow(message: Message, state: FSMContext):
     is_subscribed = await check_channel_sub(message.from_user.id)
     if not is_subscribed:
-        await message.answer("⚠️️ Slayd yaratish uchun avval kanalga obuna bo'ling:", reply_markup=get_subscription_keyboard())
+        await message.answer("⚠️ Slayd yaratish uchun avval kanalga obuna bo'ling:", reply_markup=get_subscription_keyboard())
         return
 
     await state.set_state(PresentationState.waiting_for_topic)
@@ -355,13 +355,20 @@ async def generate_and_deliver(message: Message, user_id: int, state: FSMContext
     topic = data.get("topic")
     user_script = data.get("user_script")
 
+    # Narxlar mantiqan ajratildi: Ssenariy bilan -> 5 000 so'm, AI avtomatik -> 7 000 so'm
+    if user_script:
+        title = "Ssenariy bo'yicha taqdimot"
+        price_sum = 5000  # 5 000 so'm
+    else:
+        title = "AI avtomatik taqdimot"
+        price_sum = 7000  # 7 000 so'm
+
     if not is_free_mode() and not has_active_subscription(user_id):
-        price = get_slide_price()
         if PAYMENT_PROVIDER_TOKEN:
-            prices = [LabeledPrice(label="Prezentatsiya yaratish", amount=price * 100)]
+            prices = [LabeledPrice(label=title, amount=price_sum * 100)] # tiyn hisobida
             await bot.send_invoice(
                 chat_id=user_id,
-                title="Prezentatsiya uchun to'lov",
+                title=title,
                 description=f"'{topic}' mavzusida 6 ta slayd yaratish xizmati",
                 provider_token=PAYMENT_PROVIDER_TOKEN,
                 currency="UZS",
