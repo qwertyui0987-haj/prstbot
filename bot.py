@@ -28,8 +28,8 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 
 # Canal și grup
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@kanalingiz_username") 
-CHANNEL_URL = os.getenv("CHANNEL_URL", "[https://t.me/kanalingiz_username](https://t.me/kanalingiz_username)")
-GROUP_URL = os.getenv("GROUP_URL", "[https://t.me/guruhingiz_username](https://t.me/guruhingiz_username)")
+CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/kanalingiz_username")
+GROUP_URL = os.getenv("GROUP_URL", "https://t.me/guruhingiz_username")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -308,101 +308,4 @@ async def process_promo_input(message: Message, state: FSMContext):
     else:
         expire_str = "LIFETIME"
 
-    cursor.execute("INSERT OR REPLACE INTO user_subscriptions (user_id, expire_at) VALUES (?, ?)", (user_id, expire_str))
-    cursor.execute("INSERT INTO user_promos (user_id, code, used_at) VALUES (?, ?, ?)", (user_id, code, now.isoformat()))
-    cursor.execute("UPDATE promo_codes SET used_count = used_count + 1 WHERE code=?", (code,))
-    conn.commit()
-
-    await state.clear()
-    await message.answer("🎉 Tabriklaymiz! Promokod muvaffaqiyatli faollashtirildi.\nSizga obuna taqdim etildi.")
-
-@dp.message(F.text == "📊 Slayd yaratish")
-async def start_presentation_flow(message: Message, state: FSMContext):
-    is_subscribed = await check_channel_sub(message.from_user.id)
-    if not is_subscribed:
-        await message.answer("⚠️️ Slayd yaratish uchun avval kanalga obuna bo'ling:", reply_markup=get_subscription_keyboard())
-        return
-
-    await state.set_state(PresentationState.waiting_for_topic)
-    await message.answer("Prezentatsiya mavzusini kiriting:")
-
-@dp.message(PresentationState.waiting_for_topic)
-async def process_topic(message: Message, state: FSMContext):
-    topic = message.text.strip()
-    await state.update_data(topic=topic)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Menda tayyor ssenariy bor", callback_data="has_script")],
-        [InlineKeyboardButton(text="AI o'zi avtomatik yaratsin", callback_data="no_script")]
-    ])
-    await message.answer(f"Mavzu: **{topic}**\n\nSsenariyingiz bormi yoki AI o'zi yaratsinmi?", reply_markup=kb, parse_mode="Markdown")
-
-@dp.callback_query(F.data.in_(["has_script", "no_script"]))
-async def process_script_choice(call: CallbackQuery, state: FSMContext):
-    if call.data == "has_script":
-        await state.set_state(PresentationState.waiting_for_script)
-        await call.message.answer("Ssenariyingizni matn ko'rinishida yuboring:")
-    else:
-        await generate_and_deliver(call.message, call.from_user.id, state)
-
-@dp.message(PresentationState.waiting_for_script)
-async def process_script_input(message: Message, state: FSMContext):
-    await state.update_data(user_script=message.text.strip())
-    await generate_and_deliver(message, message.from_user.id, state)
-
-async def generate_and_deliver(message: Message, user_id: int, state: FSMContext):
-    data = await state.get_data()
-    topic = data.get("topic")
-    user_script = data.get("user_script")
-
-    if not is_free_mode() and not has_active_subscription(user_id):
-        price = get_slide_price()
-        if PAYMENT_PROVIDER_TOKEN:
-            prices = [LabeledPrice(label="Prezentatsiya yaratish", amount=price * 100)]
-            await bot.send_invoice(
-                chat_id=user_id,
-                title="Prezentatsiya uchun to'lov",
-                description=f"'{topic}' mavzusida 6 ta slayd yaratish xizmati",
-                provider_token=PAYMENT_PROVIDER_TOKEN,
-                currency="UZS",
-                prices=prices,
-                start_parameter="create-presentation",
-                payload=f"pres_{user_id}"
-            )
-            return
-        else:
-            await message.answer("⚠️ Hozirda to'lov tizimi faol emas. Iltimos adminga murojaat qiling.")
-            await state.clear()
-            return
-
-    msg = await message.answer("⏳ Prezentatsiya va rasmlar tayyorlanmoqda, iltimos kuting...")
-
-    try:
-        slides = await generate_presentation_content(topic, user_script)
-        file_path = f"presentation_{user_id}.pptx"
-        await create_pptx_file(slides, file_path)
-
-        doc = FSInputFile(file_path)
-        await message.answer_document(doc, caption=f"✅ Prezentatsiya tayyor!\nMavzu: {topic}")
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception as e:
-        await message.answer(f"❌ Xatolik yuz berdi: {e}")
-
-    await state.clear()
-
-@dp.pre_checkout_query()
-async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-@dp.message(F.successful_payment)
-async def process_successful_payment(message: Message, state: FSMContext):
-    await message.answer("✅ To'lov muvaffaqiyatli amalga oshirildi!")
-    await generate_and_deliver(message, message.from_user.id, state)
-
-async def main():
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    cursor.execute("INSERT OR REPLACE INTO user_subscriptions (user_id
