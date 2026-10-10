@@ -52,13 +52,26 @@ CREATE TABLE IF NOT EXISTS settings (
 )
 """)
 
+# Promokodlar jadvali (limit va tugash vaqti qo'shildi)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS promo_codes (
     code TEXT PRIMARY KEY,
     duration TEXT,
+    max_uses INTEGER DEFAULT 0,
+    expires_at TEXT,
     used_count INTEGER DEFAULT 0
 )
 """)
+
+# Eski jadvallarga xavfsiz ustun qo'shish (agar mavjud bo'lmasa)
+try:
+    cursor.execute("ALTER TABLE promo_codes ADD COLUMN max_uses INTEGER DEFAULT 0")
+except sqlite3.OperationalError:
+    pass
+try:
+    cursor.execute("ALTER TABLE promo_codes ADD COLUMN expires_at TEXT")
+except sqlite3.OperationalError:
+    pass
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS user_subscriptions (
@@ -90,6 +103,8 @@ class PromoState(StatesGroup):
 class AdminState(StatesGroup):
     waiting_for_promo_code = State()
     waiting_for_promo_duration = State()
+    waiting_for_promo_limit = State()
+    waiting_for_promo_expiry = State()
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -231,6 +246,7 @@ async def toggle_free_mode_callback(call: CallbackQuery):
     await call.answer(f"Rejim o'zgartirildi: {status_text}")
     await admin_handler(call.message)
 
+# ================= PROMOCODE ADMIN FLOW (NEW) =================
 @dp.callback_query(F.data == "add_promo")
 async def add_promo_start(call: CallbackQuery, state: FSMContext):
     if call.from_user.id != ADMIN_ID:
@@ -248,20 +264,71 @@ async def process_promo_code_name(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="1 Kunlik", callback_data="dur_1d"), InlineKeyboardButton(text="1 Haftalik", callback_data="dur_1w")],
         [InlineKeyboardButton(text="1 Oylik", callback_data="dur_1m"), InlineKeyboardButton(text="Umrbod (Tekin)", callback_data="dur_life")]
     ])
-    await message.answer(f"Promokod `{code}` uchun amal qilish muddatini tanlang:", reply_markup=kb, parse_mode="Markdown")
+    await message.answer(f"Promokod `{code}` uchun obuna muddatini tanlang:", reply_markup=kb, parse_mode="Markdown")
 
 @dp.callback_query(AdminState.waiting_for_promo_duration, F.data.startswith("dur_"))
 async def process_promo_duration(call: CallbackQuery, state: FSMContext):
+    dur_type = call.data.replace("dur_", "")
+    await state.update_data(duration=dur_type)
+    await state.set_state(AdminState.waiting_for_promo_limit)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="10 kishilik", callback_data="limit_10"), InlineKeyboardButton(text="50 kishilik", callback_data="limit_50")],
+        [InlineKeyboardButton(text="100 kishilik", callback_data="limit_100"), InlineKeyboardButton(text="1000 kishilik", callback_data="limit_1000")],
+        [InlineKeyboardButton(text="Cheksiz kishilik", callback_data="limit_0")]
+    ])
+    await call.message.answer("Promokod nechta kishiga mo'ljallanganini (limitni) tanlang:", reply_markup=kb)
+
+@dp.callback_query(AdminState.waiting_for_promo_limit, F.data.startswith("limit_"))
+async def process_promo_limit(call: CallbackQuery, state: FSMContext):
+    limit_val = int(call.data.replace("limit_", ""))
+    await state.update_data(max_uses=limit_val)
+    await state.set_state(AdminState.waiting_for_promo_expiry)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1 Kun (24 soat)", callback_data="exp_1d"), InlineKeyboardButton(text="3 Kun", callback_data="exp_3d")],
+        [InlineKeyboardButton(text="1 Hafta", callback_data="exp_1w"), InlineKeyboardButton(text="Muddatsiz", callback_data="exp_never")]
+    ])
+    await call.message.answer("Promokodning o'z amal qilish muddati (tugash vaqtini) tanlang:", reply_markup=kb)
+
+@dp.callback_query(AdminState.waiting_for_promo_expiry, F.data.startswith("exp_"))
+async def process_promo_expiry(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     code = data.get("promo_code")
-    dur_type = call.data.replace("dur_", "")
+    dur_type = data.get("duration")
+    max_uses = data.get("max_uses")
+    exp_type = call.data.replace("exp_", "")
 
-    cursor.execute("INSERT OR REPLACE INTO promo_codes (code, duration, used_count) VALUES (?, ?, 0)", (code, dur_type))
+    now = datetime.datetime.now()
+    if exp_type == "1d":
+        expires_at = (now + datetime.timedelta(days=1)).isoformat()
+    elif exp_type == "3d":
+        expires_at = (now + datetime.timedelta(days=3)).isoformat()
+    elif exp_type == "1w":
+        expires_at = (now + datetime.timedelta(weeks=1)).isoformat()
+    else:
+        expires_at = "NEVER"
+
+    cursor.execute(
+        "INSERT OR REPLACE INTO promo_codes (code, duration, max_uses, expires_at, used_count) VALUES (?, ?, ?, ?, 0)",
+        (code, dur_type, max_uses, expires_at)
+    )
     conn.commit()
 
     await state.clear()
-    await call.message.answer(f"✅ Promokod muvaffaqiyatli yaratildi!\n\nKod: `{code}`\nMuddat: {dur_type}", parse_mode="Markdown")
+    limit_text = "Cheksiz" if max_uses == 0 else f"{max_uses} kishilik"
+    exp_text = "Muddatsiz" if expires_at == "NEVER" else expires_at[:16]
 
+    await call.message.answer(
+        f"✅ Promokod muvaffaqiyatli yaratildi!\n\n"
+        f"Kod: `{code}`\n"
+        f"Obuna muddati: {dur_type}\n"
+        f"Limit: {limit_text}\n"
+        f"Amal qilish muddati: {exp_text}",
+        parse_mode="Markdown"
+    )
+
+# ================= USER PROMO INPUT FLOW =================
 @dp.message(F.text == "🎟 Promokod kiritish")
 async def enter_promo_start(message: Message, state: FSMContext):
     is_subscribed = await check_channel_sub(message.from_user.id)
@@ -277,7 +344,7 @@ async def process_promo_input(message: Message, state: FSMContext):
     code = message.text.strip().upper()
     user_id = message.from_user.id
 
-    cursor.execute("SELECT duration FROM promo_codes WHERE code=?", (code,))
+    cursor.execute("SELECT duration, max_uses, expires_at, used_count FROM promo_codes WHERE code=?", (code,))
     res = cursor.fetchone()
 
     if not res:
@@ -285,17 +352,36 @@ async def process_promo_input(message: Message, state: FSMContext):
         await state.clear()
         return
 
+    dur_type, max_uses, expires_at, used_count = res
+    now = datetime.datetime.now()
+
+    # 1. Kodning tugash vaqtini tekshirish
+    if expires_at and expires_at != "NEVER":
+        try:
+            expire_date = datetime.datetime.fromisoformat(expires_at)
+            if now > expire_date:
+                await message.answer("❌ Kechirasiz, bu promokodning amal qilish muddati tugagan!")
+                await state.clear()
+                return
+        except Exception:
+            pass
+
+    # 2. Limitni (ishlatishlar sonini) tekshirish
+    if max_uses and max_uses > 0 and used_count >= max_uses:
+        await message.answer("❌ Kechirasiz, bu promokod uchun belgilangan limit (odamlar soni) tugagan!")
+        await state.clear()
+        return
+
+    # 3. Foydalanuvchi bu kodni oldin ishlatganmi?
     cursor.execute("SELECT 1 FROM user_promos WHERE user_id=? AND code=?", (user_id, code))
     already_used = cursor.fetchone()
 
     if already_used:
-        await message.answer("⚠️ Siz ushbu promokodni alaqachon ishlatgansiz!")
+        await message.answer("⚠️ Siz ushbu promokodni allaqachon ishlatgansiz!")
         await state.clear()
         return
 
-    dur_type = res[0]
-    now = datetime.datetime.now()
-
+    # Obuna vaqtini hisoblash
     if dur_type == "1d":
         expire = now + datetime.timedelta(days=1)
         expire_str = expire.isoformat()
@@ -355,7 +441,7 @@ async def generate_and_deliver(message: Message, user_id: int, state: FSMContext
     topic = data.get("topic")
     user_script = data.get("user_script")
 
-    # Narxlar mantiqan ajratildi: Ssenariy bilan -> 5 000 so'm, AI avtomatik -> 7 000 so'm
+    # Narxlar: Ssenariy bilan -> 5 000 so'm, AI avtomatik -> 7 000 so'm
     if user_script:
         title = "Ssenariy bo'yicha taqdimot"
         price_sum = 5000  # 5 000 so'm
@@ -365,7 +451,7 @@ async def generate_and_deliver(message: Message, user_id: int, state: FSMContext
 
     if not is_free_mode() and not has_active_subscription(user_id):
         if PAYMENT_PROVIDER_TOKEN:
-            prices = [LabeledPrice(label=title, amount=price_sum * 100)] # tiyn hisobida
+            prices = [LabeledPrice(label=title, amount=price_sum * 100)] # tiynlarda
             await bot.send_invoice(
                 chat_id=user_id,
                 title=title,
