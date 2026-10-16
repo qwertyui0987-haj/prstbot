@@ -2,6 +2,7 @@ import os
 import sqlite3
 import datetime
 import logging
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message,
@@ -22,11 +23,11 @@ from generator import generate_presentation_content, create_pptx_file
 # Sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# Bir nechta adminlar ID ro'yxati (Railway'dagi ADMIN_ID bo'limidan o'qiydi, masalan: 12345,67890)
+# Bir nechta adminlar ID ro'yxati (masalan: 12345,67890)
 ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "0")
 ADMIN_IDS = [int(i.strip()) for i in ADMIN_IDS_RAW.split(",") if i.strip().isdigit()]
 
-# To'lov uchun karta ma'lumotlari (Railway Variables'dan o'qiydi)
+# To'lov uchun karta ma'lumotlari
 CARD_NUMBER = os.getenv("CARD_NUMBER", "8600 0000 0000 0000")
 CARD_HOLDER = os.getenv("CARD_HOLDER", "FAZILOV F.F.")
 
@@ -430,7 +431,7 @@ async def cancel_payment_callback(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.answer("❌ To'lov bekor qilindi.", reply_markup=get_main_keyboard())
 
-# CHEKNI QABUL KILISH (Xatoliklarsiz oddiy matn bilan)
+# CHEKNI QABUL KILISH
 @dp.message(PaymentState.waiting_for_receipt, F.photo | F.document)
 async def process_receipt_photo(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -461,7 +462,6 @@ async def process_receipt_photo(message: Message, state: FSMContext):
         ]
     ])
 
-    # Markdown belgilarisiz toza matn (xatolik bermaydi)
     caption_text = (
         f"Yangi to'lov cheki!\n\n"
         f"Foydalanuvchi: {full_name} ({username})\n"
@@ -538,7 +538,22 @@ async def generate_and_deliver_direct(user_id: int, state: FSMContext):
 
     await state.clear()
 
+# ================= WEB SERVER (RENDER Uxlab qolmasligi uchun) =================
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def web_server():
+    app = web.Application()
+    app.add_routes([web.get("/", handle)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 async def main():
+    await web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
