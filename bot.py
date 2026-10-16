@@ -22,7 +22,7 @@ from generator import generate_presentation_content, create_pptx_file
 # Sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# Bir nechta adminlar ID ro'yxati (Railway'dagi ADMIN_ID bo'limidan o'qiydi)
+# Bir nechta adminlar ID ro'yxati (Railway'dagi ADMIN_ID bo'limidan o'qiydi, masalan: 12345,67890)
 ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "0")
 ADMIN_IDS = [int(i.strip()) for i in ADMIN_IDS_RAW.split(",") if i.strip().isdigit()]
 
@@ -430,8 +430,8 @@ async def cancel_payment_callback(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.answer("❌ To'lov bekor qilindi.", reply_markup=get_main_keyboard())
 
-# CHEKNI QABUL QILISH VA BARCHA ADMINLARGA YUBORISH
-@dp.message(PaymentState.waiting_for_receipt, F.photo)
+# CHEKNI QABUL KILISH (Xatoliklarsiz oddiy matn bilan)
+@dp.message(PaymentState.waiting_for_receipt, F.photo | F.document)
 async def process_receipt_photo(message: Message, state: FSMContext):
     data = await state.get_data()
     topic = data.get("topic", "Mavzu topilmadi")
@@ -441,7 +441,16 @@ async def process_receipt_photo(message: Message, state: FSMContext):
     user_id = message.from_user.id
     full_name = message.from_user.full_name
     username = f"@{message.from_user.username}" if message.from_user.username else "Username yo'q"
-    photo_id = message.photo[-1].file_id
+
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        is_photo = True
+    elif message.document:
+        file_id = message.document.file_id
+        is_photo = False
+    else:
+        await message.answer("⚠️ Iltimos, to'lov chekini rasm yoki skrinshot ko'rinishida yuboring.")
+        return
 
     await message.answer("⏳ **Chekingiz qabul qilindi!**\nAdminlarimiz 1-15 daqiqa ichida tekshirib, prezentatsiyangizni yuborishadi.", parse_mode="Markdown")
 
@@ -452,29 +461,23 @@ async def process_receipt_photo(message: Message, state: FSMContext):
         ]
     ])
 
+    # Markdown belgilarisiz toza matn (xatolik bermaydi)
     caption_text = (
-        f"📥 **Yangi to'lov cheki!**\n\n"
-        f"👤 Foydalanuvchi: {full_name} ({username})\n"
-        f"🆔 ID: `{user_id}`\n"
-        f"📝 Mavzu: {topic}\n"
-        f"💵 Kutilayotgan summa: **{price_sum:,} so'm**"
+        f"Yangi to'lov cheki!\n\n"
+        f"Foydalanuvchi: {full_name} ({username})\n"
+        f"ID: {user_id}\n"
+        f"Mavzu: {topic}\n"
+        f"Kutilayotgan summa: {price_sum:,} so'm"
     )
 
     for admin_id in ADMIN_IDS:
         try:
-            await bot.send_photo(
-                chat_id=admin_id,
-                photo=photo_id,
-                caption=caption_text,
-                reply_markup=kb,
-                parse_mode="Markdown"
-            )
+            if is_photo:
+                await bot.send_photo(chat_id=admin_id, photo=file_id, caption=caption_text, reply_markup=kb)
+            else:
+                await bot.send_document(chat_id=admin_id, document=file_id, caption=caption_text, reply_markup=kb)
         except Exception as e:
             logging.error(f"Admin ({admin_id}) ga chek yuborishda xatolik: {e}")
-            try:
-                await bot.send_message(chat_id=admin_id, text=f"⚠️ **Chek rasmini yuborishda xatolik:** {e}\n\n{caption_text}", reply_markup=kb, parse_mode="Markdown")
-            except Exception as ex:
-                logging.error(f"Admin ({admin_id}) ga matn ham yuborilmadi: {ex}")
 
 # ADMIN TASDIQLASHI YOKI RAD ETISHI
 @dp.callback_query(F.data.startswith("approve_"))
@@ -485,9 +488,9 @@ async def approve_payment_callback(call: CallbackQuery, state: FSMContext):
     target_user_id = int(call.data.replace("approve_", ""))
     
     if call.message.caption:
-        await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ **TO'LOV TASDIQLANDI!** (Admin ID: {call.from_user.id})")
+        await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin ID: {call.from_user.id})")
     elif call.message.text:
-        await call.message.edit_text(text=call.message.text + f"\n\n✅ **TO'LOV TASDIQLANDI!** (Admin ID: {call.from_user.id})")
+        await call.message.edit_text(text=call.message.text + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin ID: {call.from_user.id})")
 
     try:
         await bot.send_message(chat_id=target_user_id, text="✅ **To'lovingiz tasdiqlandi!** Prezentatsiya tayyorlanmoqda...")
@@ -503,9 +506,9 @@ async def reject_payment_callback(call: CallbackQuery):
     target_user_id = int(call.data.replace("reject_", ""))
 
     if call.message.caption:
-        await call.message.edit_caption(caption=call.message.caption + f"\n\n❌ **TO'LOV RAD ETILDI!** (Admin ID: {call.from_user.id})")
+        await call.message.edit_caption(caption=call.message.caption + f"\n\n❌ TO'LOV RAD ETILDI! (Admin ID: {call.from_user.id})")
     elif call.message.text:
-        await call.message.edit_text(text=call.message.text + f"\n\n❌ **TO'LOV RAD ETILDI!** (Admin ID: {call.from_user.id})")
+        await call.message.edit_text(text=call.message.text + f"\n\n❌ TO'LOV RAD ETILDI! (Admin ID: {call.from_user.id})")
 
     try:
         await bot.send_message(chat_id=target_user_id, text="❌ **To'lov chekingiz rad etildi.** Iltimos, qaytadan to'lov qiling yoki adminga murojaat qiling.")
