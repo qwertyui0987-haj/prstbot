@@ -24,8 +24,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # To'lov uchun karta ma'lumotlari
-CARD_NUMBER = "8600 0000 0000 0000"  # O'zingizning karta raqamingizni kiriting
-CARD_HOLDER = "FAZILOV F.F."          # Karta egasining ismi
+CARD_NUMBER = os.getenv("CARD_NUMBER", "8600 0000 0000 0000")
+CARD_HOLDER = os.getenv("CARD_HOLDER", "FAZILOV F.F.")
 
 # Canal va guruh
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@kanalingiz_username") 
