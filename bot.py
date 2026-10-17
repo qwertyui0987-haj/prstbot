@@ -23,10 +23,10 @@ from generator import generate_presentation_content, create_pptx_file
 # Sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# ASOSIY ADMIN (Siz - barcha huquqlarga egasiz)
+# ASOSIY ADMIN (Siz)
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# YORDAMCHI ADMIN (Ikkinchi admin - faqat chek tekshiradi, o'zi uchun bot tekin ishlaydi)
+# YORDAMCHI ADMIN
 ASSISTANT_ID_RAW = os.getenv("ASSISTANT_ID", "0")
 ASSISTANT_IDS = [int(i.strip()) for i in ASSISTANT_ID_RAW.split(",") if i.strip().isdigit()]
 
@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS user_promos (
 )
 """)
 
+# Adminlarga yuborilgan chek xabarlarini saqlash uchun vaqtinchalik xotira
+# Format: {payment_id: {admin_id: message_id, ...}}
+payment_messages = {}
+
 cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('free_mode', 'true')")
 conn.commit()
 
@@ -123,7 +127,6 @@ def is_any_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID or user_id in ASSISTANT_IDS
 
 def has_active_subscription(user_id: int) -> bool:
-    # Yordamchi admin uchun har doim tekin/obunali deb hisoblaymiz
     if is_assistant(user_id):
         return True
 
@@ -208,7 +211,7 @@ async def group_info_handler(message: Message):
         parse_mode="Markdown"
     )
 
-# ================= ADMIN PANEL (Faqat Asosiy Admin - Siz uchun) =================
+# ================= ADMIN PANEL =================
 @dp.message(Command("admin"))
 async def admin_handler(message: Message):
     if not is_main_admin(message.from_user.id):
@@ -442,9 +445,9 @@ async def prepare_or_pay(message: Message, user_id: int, state: FSMContext):
 @dp.callback_query(F.data == "cancel_payment")
 async def cancel_payment_callback(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await message.answer("❌ To'lov bekor qilindi.", reply_markup=get_main_keyboard())
+    await call.message.answer("❌ To'lov bekor qilindi.", reply_markup=get_main_keyboard())
 
-# CHEKNI QABUL KILISH VA HAMMA ADMINLARGA (SIZ VA YORDAMCHIGA) YUBORISH
+# CHEKNI QABUL KILISH
 @dp.message(PaymentState.waiting_for_receipt, F.photo | F.document)
 async def process_receipt_photo(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -468,10 +471,21 @@ async def process_receipt_photo(message: Message, state: FSMContext):
 
     await message.answer("⏳ **Chekingiz qabul qilindi!**\nAdminlarimiz 1-15 daqiqa ichida tekshirib, prezentatsiyangizni yuborishadi.", parse_mode="Markdown")
 
+    # Unikal to'lov ID'sini tuzamiz
+    payment_id = f"{user_id}_{int(datetime.datetime.now().timestamp())}"
+    
+    # State ichidagi ma'lumotlarni saqlaymiz
+    payment_messages[payment_id] = {
+        "user_id": user_id,
+        "topic": topic,
+        "user_script": user_script,
+        "messages": {}
+    }
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"approve_{user_id}"),
-            InlineKeyboardButton(text="❌ Rad etish", callback_data=f"reject_{user_id}")
+            InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"appr_{payment_id}"),
+            InlineKeyboardButton(text="❌ Rad etish", callback_data=f"rejl_{payment_id}")
         ]
     ])
 
@@ -483,51 +497,108 @@ async def process_receipt_photo(message: Message, state: FSMContext):
         f"Kutilayotgan summa: {price_sum:,} so'm"
     )
 
-    # Barcha adminlarga (Sizga va Yordamchiga) yuboramiz
     all_admin_ids = [ADMIN_ID] + ASSISTANT_IDS
     for admin_id in all_admin_ids:
         if admin_id == 0:
             continue
         try:
             if is_photo:
-                await bot.send_photo(chat_id=admin_id, photo=file_id, caption=caption_text, reply_markup=kb)
+                sent_msg = await bot.send_photo(chat_id=admin_id, photo=file_id, caption=caption_text, reply_markup=kb)
             else:
-                await bot.send_document(chat_id=admin_id, document=file_id, caption=caption_text, reply_markup=kb)
+                sent_msg = await bot.send_document(chat_id=admin_id, document=file_id, caption=caption_text, reply_markup=kb)
+            
+            # Yuborilgan xabar ID'sini saqlaymiz
+            payment_messages[payment_id]["messages"][admin_id] = sent_msg.message_id
         except Exception as e:
             logging.error(f"Admin ({admin_id}) ga chek yuborishda xatolik: {e}")
 
-# ADMINLAR (SIZ YOKI YORDAMCHI) TASDIQLASHI YOKI RAD ETISHI
-@dp.callback_query(F.data.startswith("approve_"))
+    await state.clear()
+
+# ADMINLAR TASDIQLASHI (Barcha adminlardagi xabarlar sinxron yangilanadi)
+@dp.callback_query(F.data.startswith("appr_"))
 async def approve_payment_callback(call: CallbackQuery, state: FSMContext):
     if not is_any_admin(call.from_user.id):
         return
 
-    target_user_id = int(call.data.replace("approve_", ""))
+    payment_id = call.data.replace("appr_", "")
+    payment_info = payment_messages.get(payment_id)
+
+    if not payment_info:
+        await call.answer("⚠️ Ushbu chek allaqachon ko'rib chiqilgan yoki ma'lumot eskirgan!", show_alert=True)
+        return
+
+    target_user_id = payment_info["user_id"]
+    topic = payment_info["topic"]
+    user_script = payment_info["user_script"]
     admin_name = call.from_user.full_name
-    
-    if call.message.caption:
-        await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin: {admin_name})")
-    elif call.message.text:
-        await call.message.edit_text(text=call.message.text + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin: {admin_name})")
+
+    # Barcha adminlardagi tugmalarni olib tashlaymiz va statusni ko'rsatamiz
+    for admin_id, msg_id in payment_info["messages"].items():
+        try:
+            await bot.edit_message_caption(
+                chat_id=admin_id,
+                message_id=msg_id,
+                caption=f"{call.message.caption}\n\n✅ **TO'LOV TASDIQLANDI!** (Admin: {admin_name})",
+                reply_markup=None
+            )
+        except Exception:
+            try:
+                await bot.edit_message_text(
+                    chat_id=admin_id,
+                    message_id=msg_id,
+                    text=f"{call.message.text}\n\n✅ **TO'LOV TASDIQLANDI!** (Admin: {admin_name})",
+                    reply_markup=None
+                )
+            except Exception:
+                pass
+
+    # Xotiradan o'chiramiz
+    del payment_messages[payment_id]
 
     try:
         await bot.send_message(chat_id=target_user_id, text="✅ **To'lovingiz tasdiqlandi!** Prezentatsiya tayyorlanmoqda...")
-        await generate_and_deliver_direct(target_user_id, state)
+        await generate_and_deliver_direct(target_user_id, topic, user_script)
     except Exception as e:
-        await call.message.answer(f"❌ Xatolik yuz berdi: {e}")
+        await call.message.answer(f"❌ Foydalanuvchiga yuborishda xatolik: {e}")
 
-@dp.callback_query(F.data.startswith("reject_"))
+# ADMINLAR RAD ETISHI
+@dp.callback_query(F.data.startswith("rejl_"))
 async def reject_payment_callback(call: CallbackQuery):
     if not is_any_admin(call.from_user.id):
         return
 
-    target_user_id = int(call.data.replace("reject_", ""))
+    payment_id = call.data.replace("rejl_", "")
+    payment_info = payment_messages.get(payment_id)
+
+    if not payment_info:
+        await call.answer("⚠️ Ushbu chek allaqachon ko'rib chiqilgan!", show_alert=True)
+        return
+
+    target_user_id = payment_info["user_id"]
     admin_name = call.from_user.full_name
 
-    if call.message.caption:
-        await call.message.edit_caption(caption=call.message.caption + f"\n\n❌ TO'LOV RAD ETILDI! (Admin: {admin_name})")
-    elif call.message.text:
-        await call.message.edit_text(text=call.message.text + f"\n\n❌ TO'LOV RAD ETILDI! (Admin: {admin_name})")
+    # Barcha adminlardagi tugmalarni olib tashlaymiz va rad etilganini ko'rsatamiz
+    for admin_id, msg_id in payment_info["messages"].items():
+        try:
+            await bot.edit_message_caption(
+                chat_id=admin_id,
+                message_id=msg_id,
+                caption=f"{call.message.caption}\n\n❌ **TO'LOV RAD ETILDI!** (Admin: {admin_name})",
+                reply_markup=None
+            )
+        except Exception:
+            try:
+                await bot.edit_message_text(
+                    chat_id=admin_id,
+                    message_id=msg_id,
+                    text=f"{call.message.text}\n\n❌ **TO'LOV RAD ETILDI!** (Admin: {admin_name})",
+                    reply_markup=None
+                )
+            except Exception:
+                pass
+
+    # Xotiradan o'chiramiz
+    del payment_messages[payment_id]
 
     try:
         await bot.send_message(chat_id=target_user_id, text="❌ **To'lov chekingiz rad etildi.** Iltimos, qaytadan to'lov qiling yoki adminga murojaat qiling.")
@@ -535,14 +606,15 @@ async def reject_payment_callback(call: CallbackQuery):
         logging.error(f"Foydalanuvchiga xabar yuborishda xatolik: {e}")
 
 async def generate_and_deliver(message: Message, user_id: int, state: FSMContext):
-    msg = await message.answer("⏳ Prezentatsiya va rasmlar tayyorlanmoqda, iltimos kuting...")
-    await generate_and_deliver_direct(user_id, state)
-
-async def generate_and_deliver_direct(user_id: int, state: FSMContext):
     data = await state.get_data()
     topic = data.get("topic", "Mavzu")
     user_script = data.get("user_script")
+    
+    msg = await message.answer("⏳ Prezentatsiya va rasmlar tayyorlanmoqda, iltimos kuting...")
+    await generate_and_deliver_direct(user_id, topic, user_script)
+    await state.clear()
 
+async def generate_and_deliver_direct(user_id: int, topic: str, user_script: str = None):
     try:
         slides = await generate_presentation_content(topic, user_script)
         file_path = f"presentation_{user_id}.pptx"
@@ -554,8 +626,6 @@ async def generate_and_deliver_direct(user_id: int, state: FSMContext):
             os.remove(file_path)
     except Exception as e:
         await bot.send_message(chat_id=user_id, text=f"❌ Xatolik yuz berdi: {e}")
-
-    await state.clear()
 
 # ================= WEB SERVER (RENDER) =================
 async def handle(request):
