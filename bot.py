@@ -23,9 +23,12 @@ from generator import generate_presentation_content, create_pptx_file
 # Sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# Bir nechta adminlar ID ro'yxati (masalan: 12345,67890)
-ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "0")
-ADMIN_IDS = [int(i.strip()) for i in ADMIN_IDS_RAW.split(",") if i.strip().isdigit()]
+# ASOSIY ADMIN (Siz - barcha huquqlarga egasiz)
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+# YORDAMCHI ADMIN (Ikkinchi admin - faqat chek tekshiradi, o'zi uchun bot tekin ishlaydi)
+ASSISTANT_ID_RAW = os.getenv("ASSISTANT_ID", "0")
+ASSISTANT_IDS = [int(i.strip()) for i in ASSISTANT_ID_RAW.split(",") if i.strip().isdigit()]
 
 # To'lov uchun karta ma'lumotlari
 CARD_NUMBER = os.getenv("CARD_NUMBER", "8600 0000 0000 0000")
@@ -110,10 +113,20 @@ def is_free_mode():
     res = cursor.fetchone()
     return res and res[0] == 'true'
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+def is_main_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+def is_assistant(user_id: int) -> bool:
+    return user_id in ASSISTANT_IDS
+
+def is_any_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID or user_id in ASSISTANT_IDS
 
 def has_active_subscription(user_id: int) -> bool:
+    # Yordamchi admin uchun har doim tekin/obunali deb hisoblaymiz
+    if is_assistant(user_id):
+        return True
+
     cursor.execute("SELECT expire_at FROM user_subscriptions WHERE user_id=?", (user_id,))
     res = cursor.fetchone()
     if not res:
@@ -195,11 +208,11 @@ async def group_info_handler(message: Message):
         parse_mode="Markdown"
     )
 
-# ================= ADMIN PANEL =================
+# ================= ADMIN PANEL (Faqat Asosiy Admin - Siz uchun) =================
 @dp.message(Command("admin"))
 async def admin_handler(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ Siz admin emassiz!")
+    if not is_main_admin(message.from_user.id):
+        await message.answer("❌ Sizda bu buyruqqa ruxsat yo'q!")
         return
 
     cursor.execute("SELECT COUNT(*) FROM users")
@@ -221,7 +234,7 @@ async def admin_handler(message: Message):
 
 @dp.callback_query(F.data == "toggle_free_mode")
 async def toggle_free_mode_callback(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not is_main_admin(call.from_user.id):
         return
 
     current = is_free_mode()
@@ -235,7 +248,7 @@ async def toggle_free_mode_callback(call: CallbackQuery):
 
 @dp.callback_query(F.data == "add_promo")
 async def add_promo_start(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not is_main_admin(call.from_user.id):
         return
     await state.set_state(AdminState.waiting_for_promo_code)
     await call.message.answer("Yangi promokod nomini kiriting:")
@@ -429,9 +442,9 @@ async def prepare_or_pay(message: Message, user_id: int, state: FSMContext):
 @dp.callback_query(F.data == "cancel_payment")
 async def cancel_payment_callback(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    await call.message.answer("❌ To'lov bekor qilindi.", reply_markup=get_main_keyboard())
+    await message.answer("❌ To'lov bekor qilindi.", reply_markup=get_main_keyboard())
 
-# CHEKNI QABUL KILISH
+# CHEKNI QABUL KILISH VA HAMMA ADMINLARGA (SIZ VA YORDAMCHIGA) YUBORISH
 @dp.message(PaymentState.waiting_for_receipt, F.photo | F.document)
 async def process_receipt_photo(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -470,7 +483,11 @@ async def process_receipt_photo(message: Message, state: FSMContext):
         f"Kutilayotgan summa: {price_sum:,} so'm"
     )
 
-    for admin_id in ADMIN_IDS:
+    # Barcha adminlarga (Sizga va Yordamchiga) yuboramiz
+    all_admin_ids = [ADMIN_ID] + ASSISTANT_IDS
+    for admin_id in all_admin_ids:
+        if admin_id == 0:
+            continue
         try:
             if is_photo:
                 await bot.send_photo(chat_id=admin_id, photo=file_id, caption=caption_text, reply_markup=kb)
@@ -479,18 +496,19 @@ async def process_receipt_photo(message: Message, state: FSMContext):
         except Exception as e:
             logging.error(f"Admin ({admin_id}) ga chek yuborishda xatolik: {e}")
 
-# ADMIN TASDIQLASHI YOKI RAD ETISHI
+# ADMINLAR (SIZ YOKI YORDAMCHI) TASDIQLASHI YOKI RAD ETISHI
 @dp.callback_query(F.data.startswith("approve_"))
 async def approve_payment_callback(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not is_any_admin(call.from_user.id):
         return
 
     target_user_id = int(call.data.replace("approve_", ""))
+    admin_name = call.from_user.full_name
     
     if call.message.caption:
-        await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin ID: {call.from_user.id})")
+        await call.message.edit_caption(caption=call.message.caption + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin: {admin_name})")
     elif call.message.text:
-        await call.message.edit_text(text=call.message.text + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin ID: {call.from_user.id})")
+        await call.message.edit_text(text=call.message.text + f"\n\n✅ TO'LOV TASDIQLANDI! (Admin: {admin_name})")
 
     try:
         await bot.send_message(chat_id=target_user_id, text="✅ **To'lovingiz tasdiqlandi!** Prezentatsiya tayyorlanmoqda...")
@@ -500,15 +518,16 @@ async def approve_payment_callback(call: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("reject_"))
 async def reject_payment_callback(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not is_any_admin(call.from_user.id):
         return
 
     target_user_id = int(call.data.replace("reject_", ""))
+    admin_name = call.from_user.full_name
 
     if call.message.caption:
-        await call.message.edit_caption(caption=call.message.caption + f"\n\n❌ TO'LOV RAD ETILDI! (Admin ID: {call.from_user.id})")
+        await call.message.edit_caption(caption=call.message.caption + f"\n\n❌ TO'LOV RAD ETILDI! (Admin: {admin_name})")
     elif call.message.text:
-        await call.message.edit_text(text=call.message.text + f"\n\n❌ TO'LOV RAD ETILDI! (Admin ID: {call.from_user.id})")
+        await call.message.edit_text(text=call.message.text + f"\n\n❌ TO'LOV RAD ETILDI! (Admin: {admin_name})")
 
     try:
         await bot.send_message(chat_id=target_user_id, text="❌ **To'lov chekingiz rad etildi.** Iltimos, qaytadan to'lov qiling yoki adminga murojaat qiling.")
@@ -538,7 +557,7 @@ async def generate_and_deliver_direct(user_id: int, state: FSMContext):
 
     await state.clear()
 
-# ================= WEB SERVER (RENDER Uxlab qolmasligi uchun) =================
+# ================= WEB SERVER (RENDER) =================
 async def handle(request):
     return web.Response(text="Bot is running!")
 
