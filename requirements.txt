@@ -1,5 +1,6 @@
 google-genai
 python-pptx
+python-docx
 aiogram
 aiohttp
 python-dotenv
