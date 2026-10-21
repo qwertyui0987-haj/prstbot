@@ -18,13 +18,19 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from generator import generate_presentation_content, create_pptx_file
+from generator import (
+    generate_presentation_content, 
+    create_pptx_file,
+    generate_essay_content,
+    create_docx_file
+)
 
 # Sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# ASOSIY ADMIN (Siz)
+# ASOSIY ADMIN
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@doniyor_uzbe")
 
 # YORDAMCHI ADMIN
 ASSISTANT_ID_RAW = os.getenv("ASSISTANT_ID", "0")
@@ -41,7 +47,7 @@ GROUP_URL = os.getenv("GROUP_URL", "https://t.me/guruhingiz_username")
 
 logging.basicConfig(level=logging.INFO)
 
-# Baza de date SQLite
+# Baza SQLite
 conn = sqlite3.connect("bot_database.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -87,13 +93,16 @@ CREATE TABLE IF NOT EXISTS user_promos (
 """)
 
 # Adminlarga yuborilgan chek xabarlarini saqlash uchun vaqtinchalik xotira
-# Format: {payment_id: {admin_id: message_id, ...}}
 payment_messages = {}
 
 cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('free_mode', 'true')")
 conn.commit()
 
 class PresentationState(StatesGroup):
+    waiting_for_topic = State()
+    waiting_for_script = State()
+
+class EssayState(StatesGroup):
     waiting_for_topic = State()
     waiting_for_script = State()
 
@@ -137,11 +146,31 @@ def has_active_subscription(user_id: int) -> bool:
     expire_str = res[0]
     if expire_str == "LIFETIME":
         return True
+    if expire_str.startswith("USES_"):
+        try:
+            uses_left = int(expire_str.split("_")[1])
+            return uses_left > 0
+        except Exception:
+            return False
     try:
         expire_date = datetime.datetime.fromisoformat(expire_str)
         return datetime.datetime.now() < expire_date
     except Exception:
         return False
+
+def consume_subscription_use(user_id: int):
+    cursor.execute("SELECT expire_at FROM user_subscriptions WHERE user_id=?", (user_id,))
+    res = cursor.fetchone()
+    if res and res[0].startswith("USES_"):
+        try:
+            uses_left = int(res[0].split("_")[1]) - 1
+            if uses_left <= 0:
+                cursor.execute("DELETE FROM user_subscriptions WHERE user_id=?", (user_id,))
+            else:
+                cursor.execute("UPDATE user_subscriptions SET expire_at=? WHERE user_id=?", (f"USES_{uses_left}", user_id))
+            conn.commit()
+        except Exception:
+            pass
 
 async def check_channel_sub(user_id: int) -> bool:
     if not CHANNEL_ID or CHANNEL_ID == "@kanalingiz_username":
@@ -161,7 +190,7 @@ def get_subscription_keyboard():
 
 def get_main_keyboard():
     kb = [
-        [KeyboardButton(text="📊 Slayd yaratish")],
+        [KeyboardButton(text="📊 Slayd yaratish"), KeyboardButton(text="📄 Referat yaratish")],
         [KeyboardButton(text="🎟 Promokod kiritish"), KeyboardButton(text="💬 Guruhimiz (Fikr bildirish)")],
         [KeyboardButton(text="ℹ️ Ma'lumot")]
     ]
@@ -187,7 +216,7 @@ async def start_handler(message: Message):
         )
         return
 
-    await message.answer(f"Salom, {full_name}! Prezentatsiya yaratuvchi botga xush kelibsiz.\n\nSlayd yaratish uchun quyidagi tugmani bosing:", reply_markup=get_main_keyboard())
+    await message.answer(f"Salom, {full_name}! Prezentatsiya va Referat yaratuvchi botga xush kelibsiz.\n\nKerakli bo'limni tanlang:", reply_markup=get_main_keyboard())
 
 @dp.callback_query(F.data == "check_subscription")
 async def check_sub_callback(call: CallbackQuery):
@@ -211,6 +240,36 @@ async def group_info_handler(message: Message):
         parse_mode="Markdown"
     )
 
+# ================= MA'LUMOT BO'LIMI =================
+@dp.message(F.text == "ℹ️ Ma'lumot")
+async def info_handler(message: Message):
+    clean_admin_user = ADMIN_USERNAME.replace("@", "")
+    
+    # Bu yerda kanal va guruh tugmalari avtomatik env o'zgaruvchilaridan olinadi
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Rasmiy kanalimiz (Promokodlar uchun)", url=CHANNEL_URL)],
+        [InlineKeyboardButton(text="💬 Rasmiy muhokama guruhi", url=GROUP_URL)],
+        [InlineKeyboardButton(text="👨‍💻 Admin bilan aloqa (Shikoyat va takliflar)", url=f"https://t.me/{clean_admin_user}")]
+    ])
+    
+    info_text = (
+        "ℹ️ **Bot haqida ma'lumot va yo'riqnoma**\n\n"
+        "Ushbu bot akademik **referatlar (.docx)** va chiroyli **prezentatsiyalar (.pptx)** yaratib beradi.\n\n"
+        "📌 **Botdan foydalanish tartibi:**\n"
+        "1️⃣ **📊 Slayd yaratish** yoki **📄 Referat yaratish** tugmasini bosing.\n"
+        "2️⃣ Mavzuingizni kiriting.\n"
+        "3️⃣ Tayyor rejangiz bo'lsa kiriting yoki AI ga avtomatik topshiring.\n"
+        "4️⃣ To'lovni amalga oshirib chekni yuboring (yoki promokoddan foydalaning).\n\n"
+        "💰 **Xizmat narxlari:**\n"
+        "• AI avtomatik yaratsa: **7,000 so'm**\n"
+        "• Tayyor rejangiz/ssenariyingiz bo'lsa: **5,000 so'm**\n\n"
+        "🎟 **Promokod bormi?**\n"
+        "Rasmiy kanalimizda tez-tez bepul promokodlar tarqatiladi. Kanalga o'tib promokodlarni olish uchun quyidagi **'📢 Rasmiy kanalimiz'** tugmasini bosing va olingan promokodni **'🎟 Promokod kiritish'** bo'limiga kiriting.\n\n"
+        "⚠️ **Savol yoki shikoyatlaringiz bormi?**\n"
+        "Muammo yuzaga kelsa yoki takliflaringiz bo'lsa, adminga murojaat qilishingiz mumkin:"
+    )
+    
+    await message.answer(info_text, reply_markup=kb, parse_mode="Markdown")
 # ================= ADMIN PANEL =================
 @dp.message(Command("admin"))
 async def admin_handler(message: Message):
@@ -263,8 +322,10 @@ async def process_promo_code_name(message: Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_promo_duration)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 Kunlik", callback_data="dur_1d"), InlineKeyboardButton(text="1 Haftalik", callback_data="dur_1w")],
-        [InlineKeyboardButton(text="1 Oylik", callback_data="dur_1m"), InlineKeyboardButton(text="Umrbod", callback_data="dur_life")]
+        [InlineKeyboardButton(text="1 Martalik (1 ta generatsiya)", callback_data="dur_1use")],
+        [InlineKeyboardButton(text="1 Soatlik", callback_data="dur_1h"), InlineKeyboardButton(text="1 Kunlik", callback_data="dur_1d")],
+        [InlineKeyboardButton(text="1 Haftalik", callback_data="dur_1w"), InlineKeyboardButton(text="1 Oylik", callback_data="dur_1m")],
+        [InlineKeyboardButton(text="Umrbod", callback_data="dur_life")]
     ])
     await message.answer(f"Promokod `{code}` uchun obuna muddatini tanlang:", reply_markup=kb, parse_mode="Markdown")
 
@@ -275,11 +336,11 @@ async def process_promo_duration(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.waiting_for_promo_limit)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1 kishilik", callback_data="limit_1"), InlineKeyboardButton(text="5 kishilik", callback_data="limit_5")],
         [InlineKeyboardButton(text="10 kishilik", callback_data="limit_10"), InlineKeyboardButton(text="50 kishilik", callback_data="limit_50")],
-        [InlineKeyboardButton(text="100 kishilik", callback_data="limit_100"), InlineKeyboardButton(text="1000 kishilik", callback_data="limit_1000")],
-        [InlineKeyboardButton(text="Cheksiz", callback_data="limit_0")]
+        [InlineKeyboardButton(text="100 kishilik", callback_data="limit_100"), InlineKeyboardButton(text="Cheksiz", callback_data="limit_0")]
     ])
-    await call.message.answer("Promokod limitini tanlang:", reply_markup=kb)
+    await call.message.answer("Promokod limitini (nechta odam ishlata olishini) tanlang:", reply_markup=kb)
 
 @dp.callback_query(AdminState.waiting_for_promo_limit, F.data.startswith("limit_"))
 async def process_promo_limit(call: CallbackQuery, state: FSMContext):
@@ -288,10 +349,11 @@ async def process_promo_limit(call: CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.waiting_for_promo_expiry)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 Kun (24 soat)", callback_data="exp_1d"), InlineKeyboardButton(text="3 Kun", callback_data="exp_3d")],
-        [InlineKeyboardButton(text="1 Hafta", callback_data="exp_1w"), InlineKeyboardButton(text="Muddatsiz", callback_data="exp_never")]
+        [InlineKeyboardButton(text="1 Soat", callback_data="exp_1h"), InlineKeyboardButton(text="1 Kun (24 soat)", callback_data="exp_1d")],
+        [InlineKeyboardButton(text="3 Kun", callback_data="exp_3d"), InlineKeyboardButton(text="1 Hafta", callback_data="exp_1w")],
+        [InlineKeyboardButton(text="Muddatsiz", callback_data="exp_never")]
     ])
-    await call.message.answer("Promokod tugash vaqtini tanlang:", reply_markup=kb)
+    await call.message.answer("Promokod tugash vaqtini (faollashtirish muddatini) tanlang:", reply_markup=kb)
 
 @dp.callback_query(AdminState.waiting_for_promo_expiry, F.data.startswith("exp_"))
 async def process_promo_expiry(call: CallbackQuery, state: FSMContext):
@@ -302,7 +364,9 @@ async def process_promo_expiry(call: CallbackQuery, state: FSMContext):
     exp_type = call.data.replace("exp_", "")
 
     now = datetime.datetime.now()
-    if exp_type == "1d":
+    if exp_type == "1h":
+        expires_at = (now + datetime.timedelta(hours=1)).isoformat()
+    elif exp_type == "1d":
         expires_at = (now + datetime.timedelta(days=1)).isoformat()
     elif exp_type == "3d":
         expires_at = (now + datetime.timedelta(days=3)).isoformat()
@@ -366,7 +430,11 @@ async def process_promo_input(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    if dur_type == "1d":
+    if dur_type == "1use":
+        expire_str = "USES_1"
+    elif dur_type == "1h":
+        expire_str = (now + datetime.timedelta(hours=1)).isoformat()
+    elif dur_type == "1d":
         expire_str = (now + datetime.timedelta(days=1)).isoformat()
     elif dur_type == "1w":
         expire_str = (now + datetime.timedelta(weeks=1)).isoformat()
@@ -396,7 +464,7 @@ async def start_presentation_flow(message: Message, state: FSMContext):
 @dp.message(PresentationState.waiting_for_topic)
 async def process_topic(message: Message, state: FSMContext):
     topic = message.text.strip()
-    await state.update_data(topic=topic)
+    await state.update_data(topic=topic, file_type="pptx")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Menda tayyor ssenariy bor", callback_data="has_script")],
@@ -406,9 +474,15 @@ async def process_topic(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.in_(["has_script", "no_script"]))
 async def process_script_choice(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    file_type = data.get("file_type", "pptx")
+
     if call.data == "has_script":
-        await state.set_state(PresentationState.waiting_for_script)
-        await call.message.answer("Ssenariyingizni matn ko'rinishida yuboring:")
+        if file_type == "essay":
+            await state.set_state(EssayState.waiting_for_script)
+        else:
+            await state.set_state(PresentationState.waiting_for_script)
+        await call.message.answer("Ssenariyingizni (rejangizni) matn ko'rinishida yuboring:")
     else:
         await prepare_or_pay(call.message, call.from_user.id, state)
 
@@ -417,14 +491,40 @@ async def process_script_input(message: Message, state: FSMContext):
     await state.update_data(user_script=message.text.strip())
     await prepare_or_pay(message, message.from_user.id, state)
 
+# ================= ESSAY (REFERAT) FLOW =================
+@dp.message(F.text == "📄 Referat yaratish")
+async def start_essay_flow(message: Message, state: FSMContext):
+    if not await check_channel_sub(message.from_user.id):
+        await message.answer("⚠️ Avval kanalga obuna bo'ling:", reply_markup=get_subscription_keyboard())
+        return
+
+    await state.set_state(EssayState.waiting_for_topic)
+    await message.answer("Referat mavzusini kiriting:")
+
+@dp.message(EssayState.waiting_for_topic)
+async def process_essay_topic(message: Message, state: FSMContext):
+    topic = message.text.strip()
+    await state.update_data(topic=topic, file_type="essay")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Menda tayyor reja bor", callback_data="has_script")],
+        [InlineKeyboardButton(text="AI o'zi avtomatik yaratsin", callback_data="no_script")]
+    ])
+    await message.answer(f"Referat mavzusi: **{topic}**\n\nRejangiz bormi yoki AI o'zi yaratsinmi?", reply_markup=kb, parse_mode="Markdown")
+
+@dp.message(EssayState.waiting_for_script)
+async def process_essay_script_input(message: Message, state: FSMContext):
+    await state.update_data(user_script=message.text.strip())
+    await prepare_or_pay(message, message.from_user.id, state)
+
 async def prepare_or_pay(message: Message, user_id: int, state: FSMContext):
     data = await state.get_data()
     user_script = data.get("user_script")
 
-    # Narxlar
     price_sum = 5000 if user_script else 7000
 
     if is_free_mode() or has_active_subscription(user_id):
+        consume_subscription_use(user_id)
         await generate_and_deliver(message, user_id, state)
     else:
         await state.set_state(PaymentState.waiting_for_receipt)
@@ -437,7 +537,7 @@ async def prepare_or_pay(message: Message, user_id: int, state: FSMContext):
             f"💳 Karta: `{CARD_NUMBER}`\n"
             f"👤 Egasining ismi: **{CARD_HOLDER}**\n\n"
             f"⚠️ **Yo'riqnoma:** Yuqoridagi kartaga to'lovni amalga oshiring va **to'lov chekini (rasm/skrinshot)** ushbu chatga yuboring.\n\n"
-            f"Adminlarimiz chekni ko'rib chiqqach, prezentatsiyangiz darhol tayyorlanadi!",
+            f"Adminlarimiz chekni ko'rib chiqqach, hujjatingiz darhol tayyorlanadi!",
             reply_markup=kb,
             parse_mode="Markdown"
         )
@@ -447,17 +547,19 @@ async def cancel_payment_callback(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.answer("❌ To'lov bekor qilindi.", reply_markup=get_main_keyboard())
 
-# CHEKNI QABUL KILISH
+# CHEKNI QABUL QILISH
 @dp.message(PaymentState.waiting_for_receipt, F.photo | F.document)
 async def process_receipt_photo(message: Message, state: FSMContext):
     data = await state.get_data()
     topic = data.get("topic", "Mavzu topilmadi")
     user_script = data.get("user_script")
+    file_type = data.get("file_type", "pptx")
     price_sum = 5000 if user_script else 7000
 
     user_id = message.from_user.id
     full_name = message.from_user.full_name
     username = f"@{message.from_user.username}" if message.from_user.username else "Username yo'q"
+    doc_type_name = "Prezentatsiya (.pptx)" if file_type == "pptx" else "Referat (.docx)"
 
     if message.photo:
         file_id = message.photo[-1].file_id
@@ -469,16 +571,15 @@ async def process_receipt_photo(message: Message, state: FSMContext):
         await message.answer("⚠️ Iltimos, to'lov chekini rasm yoki skrinshot ko'rinishida yuboring.")
         return
 
-    await message.answer("⏳ **Chekingiz qabul qilindi!**\nAdminlarimiz 1-15 daqiqa ichida tekshirib, prezentatsiyangizni yuborishadi.", parse_mode="Markdown")
+    await message.answer("⏳ **Chekingiz qabul qilindi!**\nAdminlarimiz tekshirib, faylingizni yuborishadi.", parse_mode="Markdown")
 
-    # Unikal to'lov ID'sini tuzamiz
     payment_id = f"{user_id}_{int(datetime.datetime.now().timestamp())}"
     
-    # State ichidagi ma'lumotlarni saqlaymiz
     payment_messages[payment_id] = {
         "user_id": user_id,
         "topic": topic,
         "user_script": user_script,
+        "file_type": file_type,
         "messages": {}
     }
 
@@ -491,6 +592,7 @@ async def process_receipt_photo(message: Message, state: FSMContext):
 
     caption_text = (
         f"Yangi to'lov cheki!\n\n"
+        f"Xizmat turi: {doc_type_name}\n"
         f"Foydalanuvchi: {full_name} ({username})\n"
         f"ID: {user_id}\n"
         f"Mavzu: {topic}\n"
@@ -507,14 +609,13 @@ async def process_receipt_photo(message: Message, state: FSMContext):
             else:
                 sent_msg = await bot.send_document(chat_id=admin_id, document=file_id, caption=caption_text, reply_markup=kb)
             
-            # Yuborilgan xabar ID'sini saqlaymiz
             payment_messages[payment_id]["messages"][admin_id] = sent_msg.message_id
         except Exception as e:
             logging.error(f"Admin ({admin_id}) ga chek yuborishda xatolik: {e}")
 
     await state.clear()
 
-# ADMINLAR TASDIQLASHI (Barcha adminlardagi xabarlar sinxron yangilanadi)
+# ADMINLAR TASDIQLASHI
 @dp.callback_query(F.data.startswith("appr_"))
 async def approve_payment_callback(call: CallbackQuery, state: FSMContext):
     if not is_any_admin(call.from_user.id):
@@ -530,9 +631,9 @@ async def approve_payment_callback(call: CallbackQuery, state: FSMContext):
     target_user_id = payment_info["user_id"]
     topic = payment_info["topic"]
     user_script = payment_info["user_script"]
+    file_type = payment_info["file_type"]
     admin_name = call.from_user.full_name
 
-    # Barcha adminlardagi tugmalarni olib tashlaymiz va statusni ko'rsatamiz
     for admin_id, msg_id in payment_info["messages"].items():
         try:
             await bot.edit_message_caption(
@@ -552,12 +653,11 @@ async def approve_payment_callback(call: CallbackQuery, state: FSMContext):
             except Exception:
                 pass
 
-    # Xotiradan o'chiramiz
     del payment_messages[payment_id]
 
     try:
-        await bot.send_message(chat_id=target_user_id, text="✅ **To'lovingiz tasdiqlandi!** Prezentatsiya tayyorlanmoqda...")
-        await generate_and_deliver_direct(target_user_id, topic, user_script)
+        await bot.send_message(chat_id=target_user_id, text="✅ **To'lovingiz tasdiqlandi!** Fayl tayyorlanmoqda...")
+        await generate_and_deliver_direct(target_user_id, topic, user_script, file_type)
     except Exception as e:
         await call.message.answer(f"❌ Foydalanuvchiga yuborishda xatolik: {e}")
 
@@ -577,7 +677,6 @@ async def reject_payment_callback(call: CallbackQuery):
     target_user_id = payment_info["user_id"]
     admin_name = call.from_user.full_name
 
-    # Barcha adminlardagi tugmalarni olib tashlaymiz va rad etilganini ko'rsatamiz
     for admin_id, msg_id in payment_info["messages"].items():
         try:
             await bot.edit_message_caption(
@@ -597,7 +696,6 @@ async def reject_payment_callback(call: CallbackQuery):
             except Exception:
                 pass
 
-    # Xotiradan o'chiramiz
     del payment_messages[payment_id]
 
     try:
@@ -609,19 +707,28 @@ async def generate_and_deliver(message: Message, user_id: int, state: FSMContext
     data = await state.get_data()
     topic = data.get("topic", "Mavzu")
     user_script = data.get("user_script")
+    file_type = data.get("file_type", "pptx")
     
-    msg = await message.answer("⏳ Prezentatsiya va rasmlar tayyorlanmoqda, iltimos kuting...")
-    await generate_and_deliver_direct(user_id, topic, user_script)
+    doc_name = "Prezentatsiya" if file_type == "pptx" else "Referat"
+    await message.answer(f"⏳ {doc_name} tayyorlanmoqda, iltimos kuting...")
+    await generate_and_deliver_direct(user_id, topic, user_script, file_type)
     await state.clear()
 
-async def generate_and_deliver_direct(user_id: int, topic: str, user_script: str = None):
+async def generate_and_deliver_direct(user_id: int, topic: str, user_script: str = None, file_type: str = "pptx"):
     try:
-        slides = await generate_presentation_content(topic, user_script)
-        file_path = f"presentation_{user_id}.pptx"
-        await create_pptx_file(slides, file_path)
+        if file_type == "essay":
+            essay_data = await generate_essay_content(topic, user_script)
+            file_path = f"essay_{user_id}.docx"
+            await create_docx_file(essay_data, file_path)
+            doc = FSInputFile(file_path)
+            await bot.send_document(chat_id=user_id, document=doc, caption=f"✅ Referat tayyor!\nMavzu: {topic}")
+        else:
+            slides = await generate_presentation_content(topic, user_script)
+            file_path = f"presentation_{user_id}.pptx"
+            await create_pptx_file(slides, file_path)
+            doc = FSInputFile(file_path)
+            await bot.send_document(chat_id=user_id, document=doc, caption=f"✅ Prezentatsiya tayyor!\nMavzu: {topic}")
 
-        doc = FSInputFile(file_path)
-        await bot.send_document(chat_id=user_id, document=doc, caption=f"✅ Prezentatsiya tayyor!\nMavzu: {topic}")
         if os.path.exists(file_path):
             os.remove(file_path)
     except Exception as e:
